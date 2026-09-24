@@ -142,7 +142,9 @@ p { margin: 0; }
 /* Menu recolhido: só ícones, rótulos ficam no title dos botões. */
 .menu-recolhido .lateral { padding: 20px 10px; }
 .menu-recolhido .marca { padding: 4px 0 18px; flex-direction: column; gap: 10px; }
-.menu-recolhido .marca-texto, .menu-recolhido .grupo, .menu-recolhido .aba span, .menu-recolhido .usuario-nome { display: none; }
+.menu-recolhido .marca-texto { display: block; }
+.menu-recolhido .marca-nome { font-size: 15px; text-align: center; }
+.menu-recolhido .marca-conta, .menu-recolhido .grupo, .menu-recolhido .aba span, .menu-recolhido .usuario-nome { display: none; }
 .menu-recolhido .recolher svg { transform: rotate(180deg); }
 .menu-recolhido .aba { justify-content: center; padding: 10px 0; }
 .menu-recolhido .usuario { justify-content: center; padding: 12px 0 0; }
@@ -446,7 +448,8 @@ input[readonly] { background: var(--areia); color: var(--tinta-suave); }
   .lateral, .menu-recolhido .lateral { flex-direction: row; align-items: center; gap: 6px; padding: 6px 10px; overflow: visible; }
   .marca, .menu-recolhido .marca { padding: 0; gap: 0; flex-direction: row; flex: none; }
   .marca-simbolo { width: 26px; height: 26px; }
-  .marca-texto, .marca-conta, .recolher { display: none; }
+  .marca-conta, .recolher { display: none; }
+  .marca-nome { font-size: 18px; }
   .abas, .menu-recolhido .abas { flex-direction: row; gap: 0; margin-left: 2px; align-items: center; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
   .grupo { display: none; }
   .aba, .menu-recolhido .aba { padding: 8px 8px; font-size: 13px; justify-content: flex-start; margin: 0; border: 0; flex: none; }
