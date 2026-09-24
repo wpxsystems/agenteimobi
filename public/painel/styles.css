@@ -112,7 +112,7 @@ p { margin: 0; }
 .marca { display: flex; align-items: center; gap: 10px; padding: 4px 8px 18px; }
 .marca-simbolo { width: 30px; height: 30px; color: var(--dourado); flex: none; }
 .marca-texto { min-width: 0; flex: 1; overflow: hidden; }
-.marca-nome { display: block; font-family: var(--fonte-titulo); font-weight: 700; font-size: 19px; letter-spacing: -0.01em; color: #fff; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.marca-nome { display: block; font-family: var(--fonte-titulo); font-weight: 700; font-size: 22px; letter-spacing: -0.01em; color: #fff; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .marca-conta { display: block; font-size: 12px; color: #a9bfb2; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .recolher {
   flex: none; width: 28px; height: 28px; border-radius: 50%; border: 1px solid rgba(255,255,255,.18);

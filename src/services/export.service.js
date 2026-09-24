@@ -102,7 +102,7 @@ function toCsv(rows) {
  */
 async function writeXlsx({ rows, resumo }, stream) {
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'AgenteImobi';
+  wb.creator = 'Imobi';
   wb.created = new Date();
 
   const ws = wb.addWorksheet('Leads', { views: [{ state: 'frozen', ySplit: 1 }] });
