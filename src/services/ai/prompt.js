@@ -37,16 +37,25 @@ function describeProperty(p) {
   return lines.join('\n');
 }
 
-function buildSystemPrompt({ tenant, property, activeProperties, lead, today }) {
+const shortLine = (p) =>
+  `- #${p.code}: ${p.title} (${p.locationSummary || 's/ local'}) — ${brl(p.priceCents)}${p.dealType === 'venda' ? ' (venda)' : '/mês'}`;
+
+function buildSystemPrompt({ tenant, property, activeProperties, alternatives = [], lead, today }) {
   const known = JSON.stringify(lead.qualification || {});
 
   const imovelBlock = property
     ? `<imovel>\n${describeProperty(property)}\n</imovel>`
     : `<imoveis_disponiveis>\n${
-        activeProperties.length
-          ? activeProperties.map((p) => `- #${p.code}: ${p.title} (${p.locationSummary || 's/ local'}) — ${brl(p.priceCents)}`).join('\n')
-          : '(nenhum imóvel ativo cadastrado)'
+        activeProperties.length ? activeProperties.map(shortLine).join('\n') : '(nenhum imóvel ativo cadastrado)'
       }\n</imoveis_disponiveis>\nO lead ainda não disse qual imóvel quer. Descubra e preencha "codigo_imovel".`;
+
+  const alternativasBlock =
+    property && alternatives.length
+      ? `\n<outros_imoveis_compativeis>\n${alternatives.map(shortLine).join('\n')}\n</outros_imoveis_compativeis>`
+      : '';
+  const duvidasBlock = lead.openQuestions?.length
+    ? `\n<duvidas_ja_registradas>${JSON.stringify(lead.openQuestions)}</duvidas_ja_registradas>`
+    : '';
 
   return `Você é ${tenant.assistantName}, assistente virtual de atendimento da ${tenant.name}, respondendo pelo WhatsApp.
 Hoje é ${today}.
@@ -59,14 +68,16 @@ Objetivo: atender bem o interessado, tirar dúvidas sobre o imóvel usando SOMEN
 5. em quantos dias pretende se mudar
 6. se quer agendar uma visita e qual dia/período prefere
 
-${imovelBlock}
+${imovelBlock}${alternativasBlock}
 
 <fatos_ja_coletados>${known}</fatos_ja_coletados>
-<classificacao_atual>${lead.classification}</classificacao_atual>
+<classificacao_atual>${lead.classification}</classificacao_atual>${duvidasBlock}
 
 Regras de conduta:
 - Escreva como uma pessoa no WhatsApp: mensagens curtas, cordiais, em português do Brasil, no máximo 2 perguntas por mensagem. Sem markdown, sem listas longas.
-- Nunca invente informação que não está nos dados do imóvel. Se não souber, diga que vai confirmar com o corretor e use proxima_acao = "transferir_humano".
+- Nunca invente informação que não está nos dados do imóvel. Se o lead perguntar algo que os dados não respondem, diga que vai confirmar com o corretor, registre a pergunta em "duvidas_sem_resposta" (frase curta, sem repetir as já registradas) e continue o atendimento. Só use "transferir_humano" se a dúvida impedir o lead de decidir.
+- Se o imóvel atual não atende o lead (pet, renda, garantia, número de moradores) e houver imóveis em <outros_imoveis_compativeis>, ofereça o mais parecido antes de encerrar, citando código e valor. Só troque "codigo_imovel" se o lead disser que quer esse outro imóvel; caso contrário mantenha o código do imóvel atual.
+- Ao usar "transferir_humano", preencha "resumo_para_corretor" com 2 a 4 frases: quem é o lead, qual imóvel, fatos coletados, o que foi combinado e o que ainda falta. Nos outros casos deixe null.
 - Não negocie preço, não prometa aprovação de cadastro nem reserve o imóvel.
 - Não peça CPF, RG, comprovantes, endereço atual ou qualquer documento — isso é feito depois pelo corretor.
 - Não repita perguntas sobre fatos já coletados.

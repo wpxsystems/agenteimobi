@@ -106,4 +106,24 @@ async function logout(token) {
   );
 }
 
-module.exports = { login, refresh, logout, hashPassword };
+/**
+ * Entrada automática do ambiente LOCAL: emite a sessão do admin do seed sem senha.
+ * Só existe com DEV_AUTO_LOGIN=true fora de produção; a rota nem é montada em produção.
+ * Os tokens são os mesmos do login normal, então todo o resto (RLS, refresh, logout) continua igual.
+ */
+async function devLogin() {
+  if (!env.devAutoLogin) throw AppError.notFound('Rota');
+  const tenant = await Tenant.findOne({ where: { slug: env.SEED_TENANT_SLUG || '', isActive: true } });
+  if (!tenant) throw new AppError('DEV_LOGIN_UNAVAILABLE', 'Conta do seed não encontrada: rode o seed', 409);
+  return inTx(tenant.id, async (t) => {
+    const where = env.SEED_ADMIN_EMAIL
+      ? Sequelize.where(Sequelize.fn('lower', Sequelize.col('email')), env.SEED_ADMIN_EMAIL.toLowerCase())
+      : { role: 'admin' };
+    const user = await User.findOne({ where, order: [['createdAt', 'ASC']], transaction: t });
+    if (!user || !user.isActive) throw new AppError('DEV_LOGIN_UNAVAILABLE', 'Admin do seed não encontrado: rode o seed', 409);
+    const tokens = await issueTokens(user, t);
+    return { user, ...tokens };
+  });
+}
+
+module.exports = { login, refresh, logout, hashPassword, devLogin };

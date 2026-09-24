@@ -14,6 +14,14 @@ Anúncio (Marketplace/Instagram/OLX)  →  link rastreado /r/<conta>/<CODIGO>?sr
    → webhook → IA conversa e qualifica → classificação no backend → transfere o quente ao corretor
 ```
 
+## O que a assistente faz
+
+- Responde dúvidas só com os dados cadastrados do imóvel e coleta renda, garantia, moradores, pet, prazo e interesse em visita.
+- A classificação (quente, morno, frio) é calculada no backend a partir desses fatos, nunca pela IA.
+- **Alternativas compatíveis:** se o imóvel não serve (pet, renda, garantia, moradores), o backend calcula quais outros imóveis ativos servem e a IA oferece o mais parecido; se o lead aceitar, a conversa passa a ser sobre ele.
+- **Resumo para o corretor:** ao transferir, a IA escreve um resumo da conversa (quem é, o que quer, o que foi combinado). Se a transferência for automática, o backend gera o resumo a partir dos fatos.
+- **Dúvidas sem resposta:** o que o lead perguntou e o cadastro não respondia fica registrado no lead e agregado por imóvel, para o dono completar as informações.
+
 ## 1. Configurar o WhatsApp Cloud API (Meta)
 
 1. Em [developers.facebook.com](https://developers.facebook.com), crie um app do tipo **Business** e adicione o produto **WhatsApp**.
@@ -47,6 +55,14 @@ npm run dev
 
 O webhook precisa de uma URL HTTPS pública. Em desenvolvimento, use um túnel (ex.: cloudflared ou ngrok) e aponte `PUBLIC_BASE_URL` para ele.
 
+### Painel e simulador (teste visual, sem WhatsApp real)
+
+Com a API no ar, abra `http://localhost:<PORT>/painel/` e entre com a conta do seed (`SEED_TENANT_SLUG`, `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`). Com `DEV_AUTO_LOGIN=true` (só fora de produção) o painel entra sozinho como esse admin, sem pedir senha; "Sair" volta para a tela de entrada até você escolher entrar de novo. O painel mostra leads com a ficha de qualificação e o carimbo quente/morno/frio, os imóveis com o link do anúncio, e três dashboards (Funil, Anúncios e Atendimento) com filtro de período e imóvel, gráficos com tabela equivalente e exportação em Excel/CSV. O menu lateral pode ser recolhido e o tema (claro/escuro) é escolhido no próprio painel; as duas preferências ficam salvas no navegador.
+
+Fora de produção (`NODE_ENV` diferente de `production`) o painel ganha um simulador: **Simular um lead novo** cria uma conversa como se um cliente tivesse chegado pelo anúncio, e **Enviar como o lead** passa a mensagem pelo mesmo fluxo do webhook (rota `POST /api/v1/dev/inbound`). Com `WA_MOCK=true` nada é enviado para a Meta; a resposta da assistente fica só no banco e aparece no painel. A assistente só responde com `ANTHROPIC_API_KEY` preenchida.
+
+Os arquivos do painel ficam em `public/painel` e são servidos pela própria API (no compose, a pasta é montada no container, então editar não exige rebuild).
+
 ## 3. Colocar a casa do cliente no ar
 
 ```bash
@@ -74,10 +90,13 @@ Coloque o `trackedLink` na descrição do anúncio (ex.: "Atendimento imediato n
 | GET/POST | `/api/v1/properties` | Listar/criar imóveis (criar: admin) |
 | GET/PATCH | `/api/v1/properties/:id` | Ver/editar imóvel (editar: admin) |
 | GET | `/api/v1/properties/:id/links?src=` | Link wa.me e link rastreado |
+| GET | `/api/v1/properties/:id/open-questions` | Perguntas dos leads que a IA não soube responder (o que falta no cadastro) |
 | GET | `/api/v1/leads?classification=&status=&propertyId=` | Leads com classificação e qualificação |
+| GET | `/api/v1/leads/export?format=csv\|xlsx&propertyId=&from=&to=` | Baixa os leads em CSV ou Excel (abas Leads e Resumo) |
 | GET/PATCH | `/api/v1/leads/:id` | Conversa completa / mudar status, ligar ou desligar o bot |
 | POST | `/api/v1/leads/:id/messages` | Corretor responde pelo sistema (assume a conversa) |
 | GET | `/api/v1/metrics/funnel?propertyId=&from=&to=` | Cliques → conversas → qualificados → visitas |
+| GET | `/api/v1/metrics/overview?propertyId=&from=&to=` | Funil + série diária + por imóvel + por origem + motivos de desqualificação + transferidos aguardando o corretor + tempo mediano até transferir |
 | GET/POST | `/webhooks/whatsapp` | Webhook da Meta (assinatura validada) |
 | GET | `/r/:slug/:code?src=` | Link rastreado público (conta o clique e redireciona) |
 

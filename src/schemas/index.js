@@ -73,6 +73,8 @@ const funnelQuery = z
   })
   .strict();
 
+const leadExport = funnelQuery.extend({ format: z.enum(['csv', 'xlsx']).default('csv') }).strict();
+
 const redirectParams = z
   .object({
     slug: z.string().regex(/^[a-z0-9-]{3,40}$/),
@@ -80,7 +82,17 @@ const redirectParams = z
   })
   .strict();
 
+// Simulador (dev): mensagem como se viesse do lead pelo WhatsApp.
+const devInbound = z
+  .object({
+    phone: z.string().regex(/^[0-9]{8,15}$/, 'Só dígitos, com DDI'),
+    name: z.string().trim().max(120).optional(),
+    text: z.string().trim().min(1).max(4000),
+  })
+  .strict();
+
 module.exports = {
+  devInbound,
   login,
   refresh,
   propertyCreate,
@@ -91,5 +103,6 @@ module.exports = {
   leadUpdate,
   humanMessage,
   funnelQuery,
+  leadExport,
   redirectParams,
 };

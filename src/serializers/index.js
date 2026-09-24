@@ -52,7 +52,9 @@ function lead(l) {
     visitPreference: l.visitPreference,
     botActive: l.botActive,
     handoffReason: l.handoffReason,
+    handoffSummary: l.handoffSummary ?? null,
     handoffAt: iso(l.handoffAt),
+    openQuestions: Array.isArray(l.openQuestions) ? l.openQuestions : [],
     lastInboundAt: iso(l.lastInboundAt),
     lastOutboundAt: iso(l.lastOutboundAt),
     source: l.source,
@@ -65,4 +67,20 @@ function message(m) {
   return { id: m.id, direction: m.direction, author: m.author, type: m.msgType, text: m.body, createdAt: iso(m.createdAt) };
 }
 
-module.exports = { user, property, lead, message };
+function openQuestion(r) {
+  return { question: r.question, leads: Number(r.leads), lastAskedAt: iso(r.lastAskedAt) };
+}
+
+function awaitingLead(r) {
+  return {
+    id: r.id,
+    name: r.displayName,
+    phone: r.waId,
+    propertyCode: r.propertyCode,
+    classification: r.classification,
+    handoffAt: iso(r.handoffAt),
+    waitingMinutes: r.waitingMinutes,
+  };
+}
+
+module.exports = { user, property, lead, message, openQuestion, awaitingLead };

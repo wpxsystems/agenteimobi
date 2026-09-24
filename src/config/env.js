@@ -29,6 +29,12 @@ const schema = z.object({
   WA_VERIFY_TOKEN: z.string().min(16),
   WA_OWNER_ALERT_TEMPLATE: z.string().default(''),
   WA_OWNER_ALERT_TEMPLATE_LANG: z.string().default('pt_BR'),
+  // Dev local: 'true' = não chama a Meta, só registra a saída (painel/simulador). Ignorado em produção.
+  WA_MOCK: z.enum(['true', 'false']).default('false'),
+  // Dev local: 'true' = o painel entra sozinho como o admin do seed, sem senha. Ignorado em produção.
+  DEV_AUTO_LOGIN: z.enum(['true', 'false']).default('false'),
+  SEED_TENANT_SLUG: z.string().regex(/^[a-z0-9-]{3,40}$/).optional(),
+  SEED_ADMIN_EMAIL: z.string().email().optional(),
 
   // Anthropic
   ANTHROPIC_API_KEY: z.string().min(1),
@@ -51,5 +57,8 @@ if (!parsed.success) {
 
 const env = parsed.data;
 env.corsOrigins = env.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean);
+env.isDev = env.NODE_ENV !== 'production';
+env.waMock = env.isDev && env.WA_MOCK === 'true';
+env.devAutoLogin = env.isDev && env.DEV_AUTO_LOGIN === 'true';
 
 module.exports = env;

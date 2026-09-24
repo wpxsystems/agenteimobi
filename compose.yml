@@ -26,11 +26,14 @@ services:
     environment:
       DATABASE_URL: postgres://aim_app:${AIM_APP_PASSWORD}@db:5432/agente_imobi
       DATABASE_MIGRATION_URL: postgres://aim_owner:${POSTGRES_PASSWORD}@db:5432/agente_imobi
+    volumes:
+      # Painel estático editável sem rebuild (só arquivos públicos; nada de código nem .env).
+      - ./public:/app/public:ro
     depends_on:
       db:
         condition: service_healthy
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:${PORT:-3000}"
     # labels:
     #   - traefik.enable=true
     #   - traefik.http.routers.agente-imobi.rule=Host(`<subdominio>.<dominio>`)

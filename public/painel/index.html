@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgenteImobi</title>
+  <meta name="description" content="Painel do atendimento por WhatsApp: leads, imóveis, dashboards e simulador.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT@9..144,500;9..144,600;9..144,700,50&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<aside class="lateral" id="topo" hidden>
+  <div class="marca">
+    <svg class="marca-simbolo" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 4 4 14v14h9v-8h6v8h9V14z" fill="currentColor"/></svg>
+    <div class="marca-texto">
+      <span class="marca-nome">AgenteImobi</span>
+      <span class="marca-conta" id="conta-nome"></span>
+    </div>
+    <button type="button" class="recolher" id="recolher" aria-expanded="true" aria-label="Recolher menu" title="Recolher menu">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12 4 6 10l6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+  <nav class="abas" aria-label="Seções">
+    <span class="grupo">Operação</span>
+    <button type="button" class="aba" data-view="leads" aria-current="page" title="Leads">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14v9H8l-4 3v-3H3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg><span>Leads</span>
+    </button>
+    <button type="button" class="aba" data-view="imoveis" title="Imóveis">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 9.5 10 4l7 5.5V17h-4.5v-4h-5v4H3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg><span>Imóveis</span>
+    </button>
+    <span class="grupo">Dashboards</span>
+    <button type="button" class="aba" data-view="funil" title="Funil">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14l-5.5 6.5V16l-3 1.5V10.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg><span>Funil</span>
+    </button>
+    <button type="button" class="aba" data-view="anuncios" title="Anúncios">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 16V9m5 7V4m5 12v-6m5 6V7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span>Anúncios</span>
+    </button>
+    <button type="button" class="aba" data-view="atendimento" title="Atendimento">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 6v4l3 2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg><span>Atendimento</span>
+    </button>
+  </nav>
+  <div class="rodape-menu">
+    <button type="button" class="aba tema" id="tema" aria-pressed="false" title="Tema escuro">
+      <svg class="icone-sol" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="3.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 2v2m0 12v2m8-8h-2M4 10H2m12.4-5.4-1.4 1.4M7 13l-1.4 1.4m0-8.8L7 7m6 6 1.4 1.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      <svg class="icone-lua" viewBox="0 0 20 20" aria-hidden="true"><path d="M15.5 12.5A6.5 6.5 0 0 1 7.5 4.5a6.5 6.5 0 1 0 8 8z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+      <span id="tema-rotulo">Tema escuro</span>
+    </button>
+    <div class="usuario">
+      <span class="usuario-nome" id="usuario-nome"></span>
+      <button type="button" class="botao-texto" id="sair">Sair</button>
+    </div>
+  </div>
+</aside>
+
+<div class="conteudo">
+<div class="aviso" id="aviso" hidden></div>
+
+<main id="main">
+
+  <!-- Entrada -->
+  <section class="entrada" id="view-login">
+    <form class="entrada-form" id="form-login" autocomplete="on">
+      <h1 class="entrada-titulo">Atendimento por WhatsApp para imóveis</h1>
+      <p class="entrada-texto">Veja quem chegou pelo anúncio, o que a assistente já descobriu e quem está pronto para visitar.</p>
+      <label class="campo">
+        <span>Conta</span>
+        <input name="tenant" type="text" required pattern="[a-z0-9\-]{3,40}" placeholder="cliente-teste" autocapitalize="none" spellcheck="false">
+      </label>
+      <label class="campo">
+        <span>E-mail</span>
+        <input name="email" type="email" required autocomplete="username">
+      </label>
+      <label class="campo">
+        <span>Senha</span>
+        <input name="password" type="password" required autocomplete="current-password">
+      </label>
+      <p class="erro" id="login-erro" role="alert"></p>
+      <button type="submit" class="botao primario">Entrar</button>
+      <button type="button" class="botao secundario" id="login-dev" hidden>Entrar como admin local, sem senha</button>
+    </form>
+  </section>
+
+  <!-- Leads -->
+  <section class="leads" id="view-leads" data-pane="lista" hidden>
+    <div class="painel-troca" role="tablist" aria-label="Painéis">
+      <button type="button" data-pane="lista" aria-selected="true">Lista</button>
+      <button type="button" data-pane="conversa">Conversa</button>
+      <button type="button" data-pane="ficha">Ficha</button>
+    </div>
+
+    <aside class="lista" data-pane-name="lista">
+      <div class="lista-cabeca">
+        <h2>Leads</h2>
+        <select id="filtro-classificacao" aria-label="Filtrar por classificação">
+          <option value="">Todos</option>
+          <option value="quente">Quentes</option>
+          <option value="morno">Mornos</option>
+          <option value="frio">Frios</option>
+          <option value="indefinido">Ainda qualificando</option>
+        </select>
+      </div>
+      <button type="button" class="botao secundario largo" id="novo-simulado" hidden>Simular um lead novo</button>
+      <ol class="lista-itens" id="leads"></ol>
+    </aside>
+
+    <section class="conversa" data-pane-name="conversa" aria-live="polite">
+      <div class="conversa-vazia" id="conversa-vazia">
+        <p>Escolha um lead na lista para ler a conversa.</p>
+        <p class="sutil" id="conversa-vazia-dica"></p>
+      </div>
+      <div class="conversa-corpo" id="conversa-corpo" hidden>
+        <header class="conversa-cabeca">
+          <div>
+            <h2 id="lead-nome"></h2>
+            <p class="sutil" id="lead-sub"></p>
+          </div>
+          <div class="conversa-acoes">
+            <button type="button" class="botao secundario" id="bot-toggle"></button>
+          </div>
+        </header>
+        <ol class="mensagens" id="mensagens"></ol>
+        <p class="digitando" id="digitando" hidden><span></span><span></span><span></span> assistente escrevendo</p>
+        <form class="compositor" id="form-mensagem">
+          <label class="visualmente-oculto" for="texto-mensagem">Mensagem</label>
+          <textarea id="texto-mensagem" rows="2" placeholder="Escreva a mensagem" required></textarea>
+          <div class="compositor-botoes">
+            <button type="submit" class="botao lead" data-como="lead" id="enviar-lead" hidden>Enviar como o lead</button>
+            <button type="submit" class="botao primario" data-como="corretor" id="enviar-corretor">Responder como corretor</button>
+          </div>
+          <p class="erro" id="mensagem-erro" role="alert"></p>
+        </form>
+      </div>
+    </section>
+
+    <aside class="ficha" data-pane-name="ficha">
+      <div class="ficha-vazia" id="ficha-vazia"><p class="sutil">A ficha do lead aparece aqui.</p></div>
+      <div class="ficha-corpo" id="ficha-corpo" hidden>
+        <div class="ficha-topo">
+          <h2>Ficha do lead</h2>
+          <div class="carimbo" id="carimbo" data-classe="indefinido">qualificando</div>
+        </div>
+        <div class="pontuacao">
+          <div class="pontuacao-barra"><span id="pontuacao-preenchida" style="width:0%"></span></div>
+          <p class="sutil"><span id="pontuacao-valor">0</span> de 100 pontos. Quente a partir de 70, morno a partir de 40.</p>
+        </div>
+        <dl class="fatos" id="fatos"></dl>
+        <div class="ficha-bloco" id="motivos-bloco" hidden>
+          <h3>O que desqualifica</h3>
+          <ul id="motivos"></ul>
+        </div>
+        <div class="ficha-bloco" id="resumo-bloco" hidden>
+          <h3>Resumo para o corretor</h3>
+          <p class="resumo" id="resumo-texto"></p>
+        </div>
+        <div class="ficha-bloco" id="duvidas-bloco" hidden>
+          <h3>Dúvidas que a assistente não soube responder</h3>
+          <ul class="duvidas" id="duvidas"></ul>
+          <p class="sutil">Complete as informações do imóvel e a assistente passa a responder sozinha.</p>
+        </div>
+        <div class="ficha-bloco">
+          <h3>Andamento</h3>
+          <label class="campo">
+            <span>Status</span>
+            <select id="lead-status">
+              <option value="em_atendimento">Em atendimento</option>
+              <option value="transferido">Transferido ao corretor</option>
+              <option value="visita_agendada">Visita agendada</option>
+              <option value="descartado">Descartado</option>
+            </select>
+          </label>
+          <p class="sutil" id="lead-handoff"></p>
+        </div>
+      </div>
+    </aside>
+  </section>
+
+  <!-- Imóveis -->
+  <section class="imoveis" id="view-imoveis" hidden>
+    <aside class="imoveis-lista">
+      <div class="lista-cabeca">
+        <h2>Imóveis</h2>
+        <button type="button" class="botao secundario" id="novo-imovel">Cadastrar imóvel</button>
+      </div>
+      <ol class="lista-itens" id="imoveis"></ol>
+    </aside>
+    <section class="imovel-editor">
+      <div class="conversa-vazia" id="imovel-vazio"><p>Escolha um imóvel ou cadastre um novo.</p></div>
+      <form class="imovel-form" id="form-imovel" hidden>
+        <h2 id="imovel-titulo-form">Novo imóvel</h2>
+        <div class="links" id="links" hidden>
+          <h3>Links para o anúncio</h3>
+          <p class="sutil">Cole o link rastreado na descrição do anúncio. Cada clique conta no funil e abre o WhatsApp com o código do imóvel.</p>
+          <div class="link-linha"><input id="link-rastreado" readonly aria-label="Link rastreado"><button type="button" class="botao secundario" data-copiar="link-rastreado">Copiar</button><a class="botao secundario" id="abrir-rastreado" target="_blank" rel="noopener">Abrir</a></div>
+          <div class="link-linha"><input id="link-wa" readonly aria-label="Link direto do WhatsApp"><button type="button" class="botao secundario" data-copiar="link-wa">Copiar</button></div>
+        </div>
+        <div class="grade">
+          <label class="campo"><span>Código</span><input name="code" required pattern="[A-Za-z0-9]{3,12}" placeholder="CASA01"></label>
+          <label class="campo"><span>Negócio</span><select name="dealType"><option value="aluguel">Aluguel</option><option value="venda">Venda</option></select></label>
+          <label class="campo col-2"><span>Título</span><input name="title" required minlength="3" maxlength="120"></label>
+          <label class="campo col-2"><span>Localização (resumo)</span><input name="locationSummary" maxlength="160" placeholder="Bairro - Cidade"></label>
+          <label class="campo"><span>Valor (R$)</span><input name="price" type="number" min="0.01" step="0.01" required></label>
+          <label class="campo"><span>Condomínio e taxas (R$)</span><input name="fees" type="number" min="0" step="0.01" value="0"></label>
+          <label class="campo"><span>Quartos</span><input name="bedrooms" type="number" min="0" max="50"></label>
+          <label class="campo"><span>Máximo de moradores</span><input name="maxOccupants" type="number" min="1" max="50"></label>
+          <label class="campo"><span>Aceita pets</span><select name="allowsPets"><option value="">Não informado</option><option value="true">Sim</option><option value="false">Não</option></select></label>
+          <label class="campo"><span>Disponível a partir de</span><input name="availableFrom" type="date"></label>
+          <fieldset class="campo col-2 garantias"><legend>Garantias aceitas</legend>
+            <label><input type="checkbox" name="acceptedGuarantees" value="fiador"> Fiador</label>
+            <label><input type="checkbox" name="acceptedGuarantees" value="caucao"> Caução</label>
+            <label><input type="checkbox" name="acceptedGuarantees" value="seguro_fianca"> Seguro fiança</label>
+            <label><input type="checkbox" name="acceptedGuarantees" value="titulo_capitalizacao"> Título de capitalização</label>
+            <label><input type="checkbox" name="acceptedGuarantees" value="sem_garantia"> Sem garantia</label>
+          </fieldset>
+          <label class="campo col-2"><span>Descrição</span><textarea name="description" rows="3" maxlength="3000"></textarea></label>
+          <div class="col-2 imovel-duvidas" id="imovel-duvidas" hidden>
+            <h3>Perguntas dos leads que a assistente não soube responder</h3>
+            <ul id="imovel-duvidas-lista"></ul>
+            <p class="sutil">Responda a elas no campo abaixo para a assistente atender sem transferir.</p>
+          </div>
+          <label class="campo col-2"><span>Informações para a assistente responder dúvidas</span><textarea name="extraInfo" rows="4" maxlength="3000" placeholder="Vaga de garagem, horário de visitas, regras do condomínio, o que está incluso..."></textarea></label>
+          <label class="campo col-2 linha"><input type="checkbox" name="isActive" checked> <span>Anúncio ativo</span></label>
+        </div>
+        <p class="erro" id="imovel-erro" role="alert"></p>
+        <div class="acoes-form">
+          <button type="submit" class="botao primario" id="salvar-imovel">Salvar imóvel</button>
+          <span class="sutil" id="imovel-ok" aria-live="polite"></span>
+        </div>
+      </form>
+    </section>
+  </section>
+
+  <!-- Dashboard: Funil -->
+  <section class="dash" id="view-funil" hidden>
+    <div class="filtros-dash"></div>
+    <p class="erro" role="alert"></p>
+    <div class="dash-conteudo">
+      <div class="tiles"></div>
+      <section class="bloco">
+        <h2>Do anúncio à visita</h2>
+        <ol class="etapas"></ol>
+        <div class="temperaturas"></div>
+      </section>
+      <section class="bloco">
+        <div class="bloco-cabeca">
+          <h2>Cliques e conversas por dia</h2>
+          <div class="legenda" aria-hidden="true"><span><i class="sw c1"></i>Cliques no anúncio</span><span><i class="sw c2"></i>Conversas iniciadas</span></div>
+        </div>
+        <div class="grafico" data-serie="cliques"></div>
+        <details class="tabela-view"><summary>Ver como tabela</summary><div class="tabela-rolagem serie-tabela"></div></details>
+      </section>
+      <div class="duas-colunas">
+        <section class="bloco"><h2>Por que os leads esfriam</h2><div class="motivos-grafico"></div></section>
+        <section class="bloco"><h2>Transferidos aguardando o corretor</h2><ul class="fila"></ul></section>
+      </div>
+    </div>
+  </section>
+
+  <!-- Dashboard: Anúncios -->
+  <section class="dash" id="view-anuncios" hidden>
+    <div class="filtros-dash"></div>
+    <p class="erro" role="alert"></p>
+    <div class="dash-conteudo">
+      <div class="tiles"></div>
+      <section class="bloco">
+        <div class="bloco-cabeca">
+          <h2>Cliques e conversas por imóvel</h2>
+          <div class="legenda" aria-hidden="true"><span><i class="sw c1"></i>Cliques no anúncio</span><span><i class="sw c2"></i>Conversas iniciadas</span></div>
+        </div>
+        <div class="barras-duplas"></div>
+      </section>
+      <section class="bloco">
+        <div class="bloco-cabeca">
+          <h2>Temperatura dos leads por imóvel</h2>
+          <div class="legenda" aria-hidden="true"><span><i class="sw t-quente"></i>Quente</span><span><i class="sw t-morno"></i>Morno</span><span><i class="sw t-frio"></i>Frio</span><span><i class="sw t-indefinido"></i>Qualificando</span></div>
+        </div>
+        <div class="empilhadas"></div>
+      </section>
+      <section class="bloco">
+        <h2>Detalhes por imóvel</h2>
+        <p class="sutil">Clique numa linha para filtrar os dashboards por esse imóvel.</p>
+        <div class="tabela-rolagem"><table class="tabela por-imovel"></table></div>
+      </section>
+      <section class="bloco"><h2>Por origem do anúncio</h2><div class="por-origem"></div></section>
+    </div>
+  </section>
+
+  <!-- Dashboard: Atendimento -->
+  <section class="dash" id="view-atendimento" hidden>
+    <div class="filtros-dash"></div>
+    <p class="erro" role="alert"></p>
+    <div class="dash-conteudo">
+      <div class="tiles"></div>
+      <section class="bloco">
+        <div class="bloco-cabeca">
+          <h2>Mensagens por dia</h2>
+          <div class="legenda" aria-hidden="true"><span><i class="sw c1"></i>Leads</span><span><i class="sw c2"></i>Assistente</span><span><i class="sw c3"></i>Corretor</span></div>
+        </div>
+        <div class="grafico" data-serie="mensagens"></div>
+        <details class="tabela-view"><summary>Ver como tabela</summary><div class="tabela-rolagem serie-tabela"></div></details>
+      </section>
+      <div class="duas-colunas">
+        <section class="bloco"><h2>Dúvidas que a assistente não soube responder</h2><div class="duvidas-top"></div></section>
+        <section class="bloco"><h2>Por que os leads esfriam</h2><div class="motivos-grafico"></div></section>
+      </div>
+      <section class="bloco"><h2>Transferidos aguardando o corretor</h2><ul class="fila"></ul></section>
+    </div>
+  </section>
+
+</main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

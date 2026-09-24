@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const env = require('../../config/env');
 const logger = require('../../config/logger');
 const AppError = require('../../errors/AppError');
@@ -7,6 +8,11 @@ const AppError = require('../../errors/AppError');
 const WA_MAX_TEXT = 4096;
 
 async function callGraph(phoneNumberId, payload) {
+  if (env.waMock) {
+    // Simulação local: nada sai para a Meta. A mensagem fica só no banco (aparece no painel).
+    logger.info({ type: payload.type, mock: true }, 'WhatsApp simulado (WA_MOCK=true)');
+    return `mock-${crypto.randomUUID()}`;
+  }
   const url = `https://graph.facebook.com/${env.WA_GRAPH_VERSION}/${encodeURIComponent(phoneNumberId)}/messages`;
   const res = await fetch(url, {
     method: 'POST',

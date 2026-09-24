@@ -31,12 +31,34 @@ const TOOL = {
         },
         required: ['renda_mensal_reais', 'garantia', 'moradores', 'tem_pet', 'prazo_mudanca_dias', 'quer_visitar'],
       },
-      codigo_imovel: { type: ['string', 'null'], description: 'Código do imóvel de interesse, sem #, se identificado.' },
+      codigo_imovel: {
+        type: ['string', 'null'],
+        description: 'Código (sem #) do imóvel que o lead quer AGORA. Mude só se o lead disser que prefere outro imóvel oferecido.',
+      },
       preferencia_visita: { type: ['string', 'null'], description: 'Dia/período preferido para visita, se informado.' },
       proxima_acao: { type: 'string', enum: ['continuar', 'propor_visita', 'transferir_humano', 'encerrar'] },
       motivo_transferencia: { type: ['string', 'null'] },
+      resumo_para_corretor: {
+        type: ['string', 'null'],
+        description:
+          'Só quando proxima_acao = transferir_humano: 2 a 4 frases para o corretor (quem é o lead, imóvel, fatos coletados, o que foi combinado, o que falta). Senão null.',
+      },
+      duvidas_sem_resposta: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Perguntas do lead NESTA rodada que os dados do imóvel não respondem (frase curta cada). Vazio se não houver.',
+      },
     },
-    required: ['resposta', 'fatos', 'codigo_imovel', 'preferencia_visita', 'proxima_acao', 'motivo_transferencia'],
+    required: [
+      'resposta',
+      'fatos',
+      'codigo_imovel',
+      'preferencia_visita',
+      'proxima_acao',
+      'motivo_transferencia',
+      'resumo_para_corretor',
+      'duvidas_sem_resposta',
+    ],
   },
 };
 
@@ -55,6 +77,9 @@ const outputSchema = z.object({
   preferencia_visita: z.string().max(200).nullable().optional(),
   proxima_acao: z.enum(['continuar', 'propor_visita', 'transferir_humano', 'encerrar']),
   motivo_transferencia: z.string().max(300).nullable().optional(),
+  resumo_para_corretor: z.string().max(1000).nullable().optional(),
+  // Itens vazios/curtos são filtrados em toInternal, não derrubam a resposta inteira.
+  duvidas_sem_resposta: z.array(z.string().max(300)).max(8).nullable().optional(),
 });
 
 /**
@@ -93,6 +118,8 @@ function toInternal(o) {
     visitPreference: o.preferencia_visita ?? null,
     nextAction: o.proxima_acao,
     handoffReason: o.motivo_transferencia ?? null,
+    handoffSummary: (o.resumo_para_corretor || '').trim() || null,
+    openQuestions: (o.duvidas_sem_resposta || []).map((s) => String(s).trim()).filter((s) => s.length >= 3),
   };
 }
 

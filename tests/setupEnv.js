@@ -24,5 +24,10 @@ const defaults = {
 for (const [k, v] of Object.entries(defaults)) {
   if (process.env[k] === undefined) process.env[k] = v;
 }
+// Valores que os testes comparam literalmente: não podem vir do .env local.
 process.env.LOG_LEVEL = 'fatal';
 process.env.REPLY_DEBOUNCE_MS = '50';
+process.env.PUBLIC_BASE_URL = defaults.PUBLIC_BASE_URL;
+process.env.PRIVACY_URL = defaults.PRIVACY_URL;
+process.env.WA_MOCK = 'false'; // os testes mockam o client; nunca depender do .env local
+process.env.DEV_AUTO_LOGIN = 'true'; // a integração testa a entrada automática local

@@ -1,10 +1,10 @@
 'use strict';
 
-const { UniqueConstraintError } = require('sequelize');
+const { UniqueConstraintError, QueryTypes } = require('sequelize');
 const env = require('../config/env');
 const inTx = require('../db/inTx');
 const AppError = require('../errors/AppError');
-const { Tenant, Property, LinkClick } = require('../models');
+const { sequelize, Tenant, Property, LinkClick } = require('../models');
 
 async function list(tenantId) {
   return inTx(tenantId, (t) => Property.findAll({ order: [['createdAt', 'DESC']], transaction: t }));
@@ -79,4 +79,24 @@ async function registerClick(slug, code, src) {
   });
 }
 
-module.exports = { list, get, create, update, links, registerClick, buildWaLink, buildTrackedLink };
+/**
+ * Dúvidas que a IA não soube responder, agregadas por imóvel: o que falta no cadastro (extra_info).
+ * Agrupa sem diferenciar maiúsculas; devolve a grafia mais antiga de cada pergunta.
+ */
+async function openQuestions(tenantId, id) {
+  await get(tenantId, id); // 404 se o imóvel não for desta conta (RLS)
+  return inTx(tenantId, (t) =>
+    sequelize.query(
+      `SELECT min(q.question) AS question, count(DISTINCT l.id)::int AS leads, max(l.updated_at) AS "lastAskedAt"
+         FROM aim_lead l
+         CROSS JOIN LATERAL jsonb_array_elements_text(l.open_questions) AS q(question)
+        WHERE l.property_id = :id
+        GROUP BY lower(q.question)
+        ORDER BY leads DESC, "lastAskedAt" DESC
+        LIMIT 50`,
+      { replacements: { id }, type: QueryTypes.SELECT, transaction: t }
+    )
+  );
+}
+
+module.exports = { list, get, create, update, links, openQuestions, registerClick, buildWaLink, buildTrackedLink };

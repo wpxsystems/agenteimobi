@@ -125,6 +125,8 @@ run('fluxo WhatsApp -> IA -> classificação (integração)', () => {
       visitPreference: 'sábado de manhã',
       nextAction: 'propor_visita',
       handoffReason: null,
+      handoffSummary: null, // a IA não transferiu: o backend gera o resumo
+      openQuestions: [],
     });
 
     const first = payload(LEAD, 'Olá! Tenho interesse no imóvel #CASA01 (Casa).');
@@ -143,6 +145,8 @@ run('fluxo WhatsApp -> IA -> classificação (integração)', () => {
     expect(lead.property_id).not.toBeNull();
     expect(lead.visit_preference).toBe('sábado de manhã');
     expect(lead.privacy_notice_sent_at).not.toBeNull();
+    expect(lead.handoff_summary).toContain('#CASA01');
+    expect(lead.handoff_summary).toContain('sábado de manhã');
 
     // O status muda antes do envio terminar: espera a mensagem de saída ser gravada.
     const msgs = await waitFor(async () => {
@@ -181,6 +185,8 @@ run('fluxo WhatsApp -> IA -> classificação (integração)', () => {
       visitPreference: null,
       nextAction: 'continuar',
       handoffReason: null,
+      handoffSummary: null,
+      openQuestions: ['Tem vaga para moto?'],
     });
     await post(payload(other, 'oi'));
     await post(payload(other, 'vi a casa'));
@@ -195,6 +201,46 @@ run('fluxo WhatsApp -> IA -> classificação (integração)', () => {
     expect(l.classification).toBe('indefinido');
     expect(l.status).toBe('em_atendimento');
     expect(l.property_id).not.toBeNull(); // vinculado pelo código devolvido pela IA
+  });
+
+  test('dúvidas sem resposta ficam no lead e agregadas por imóvel', async () => {
+    const l = await leadRow('5521977776666');
+    expect(l.open_questions).toEqual(['Tem vaga para moto?']);
+    const res = await request(app).get(`/api/v1/properties/${l.property_id}/open-questions`).set('authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual([expect.objectContaining({ question: 'Tem vaga para moto?', leads: 1 })]);
+    const lead = await request(app).get(`/api/v1/leads/${l.id}`).set('authorization', `Bearer ${token}`);
+    expect(lead.body.data.openQuestions).toEqual(['Tem vaga para moto?']);
+  });
+
+  test('lead aceita a alternativa: a IA devolve outro código e o imóvel do lead troca', async () => {
+    const other = '5521977776666';
+    ai.runTurn.mockReset();
+    ai.runTurn.mockResolvedValue({
+      reply: 'Combinado, vamos falar da kitnet então.',
+      facts: { monthlyIncomeCents: null, guarantee: null, occupants: 1, hasPets: null, moveInDays: null, wantsVisit: null },
+      propertyCode: 'KIT01',
+      visitPreference: null,
+      nextAction: 'continuar',
+      handoffReason: null,
+      handoffSummary: null,
+      openQuestions: [],
+    });
+    const before = await leadRow(other);
+    await post(payload(other, 'Prefiro a kitnet #KIT01 então'));
+    const l = await waitFor(async () => {
+      const r = await leadRow(other);
+      return r.property_id !== before.property_id ? r : null;
+    });
+    const [p] = await owner.query('SELECT code FROM aim_property WHERE id = :id', { replacements: { id: l.property_id }, type: 'SELECT' });
+    expect(p.code).toBe('KIT01');
+    expect(l.open_questions).toEqual(['Tem vaga para moto?']); // dúvidas anteriores são mantidas
+    // Código inválido/inativo não troca nada
+    ai.runTurn.mockResolvedValue({ ...(await ai.runTurn()), propertyCode: 'NAOEXISTE' });
+    await post(payload(other, 'e o #NAOEXISTE?'));
+    await waitFor(async () => ai.runTurn.mock.calls.length >= 3);
+    await new Promise((r) => setTimeout(r, 300));
+    expect((await leadRow(other)).property_id).toBe(l.property_id);
   });
 
   test('SAIR = opt-out e para de responder', async () => {
@@ -262,6 +308,60 @@ run('fluxo WhatsApp -> IA -> classificação (integração)', () => {
     const funnel = await request(app).get('/api/v1/metrics/funnel').set('authorization', `Bearer ${token}`);
     expect(funnel.body.data).toMatchObject({ clicks: 1, leads: 3, quentes: 1, transferidos: 1 });
     expect(funnel.body.data.taxas.cliqueParaConversa).toBe(300); // 3 conversas / 1 clique: nos testes os leads não passam pelo link rastreado
+
+    const ov = await request(app).get('/api/v1/metrics/overview').set('authorization', `Bearer ${token}`);
+    expect(ov.status).toBe(200);
+    expect(ov.body.data.funnel).toMatchObject({ clicks: 1, leads: 3 });
+    expect(ov.body.data.timeline.days).toHaveLength(90);
+    expect(ov.body.data.timeline.days.at(-1)).toMatchObject({ clicks: 1, leads: 3 });
+    expect(ov.body.data.byProperty.find((p) => p.code === 'CASA01')).toMatchObject({ clicks: 1, quentes: 1, transferidos: 1 });
+    expect(ov.body.data.bySource.clicks).toEqual([{ source: 'marketplace', n: 1 }]);
+    // O lead quente foi transferido e o corretor ainda não respondeu: aparece na fila
+    expect(ov.body.data.awaiting.map((a) => a.phone)).toContain(LEAD);
+    expect(ov.body.data.awaiting[0]).not.toHaveProperty('tenantId');
+    expect(ov.body.data.handoff.count).toBe(1);
+    expect(ov.body.data.byProperty.find((p) => p.code === 'CASA01')).toMatchObject({ frios: 0 });
+    expect(ov.body.data.messages.totals.lead).toBeGreaterThanOrEqual(5);
+    expect(ov.body.data.messages.totals.human).toBe(1);
+    expect(ov.body.data.messages.byDay).toHaveLength(90);
+    expect(ov.body.data.messages.byDay.at(-1).lead).toBe(ov.body.data.messages.totals.lead);
+    expect(ov.body.data.messages).toMatchObject({ leads: 3, botOnly: 2 });
+    expect(ov.body.data.openQuestionsTop).toEqual([expect.objectContaining({ question: 'Tem vaga para moto?', propertyCode: 'KIT01', leads: 1 })]);
+    const filtered = await request(app).get('/api/v1/metrics/overview?from=2020-01-01T00:00:00Z&to=2020-01-02T00:00:00Z').set('authorization', `Bearer ${token}`);
+    expect(filtered.body.data.funnel.leads).toBe(0);
+    expect(filtered.body.data.timeline.days).toHaveLength(2);
+  });
+
+  test('exportação: CSV e Excel com os mesmos filtros do funil', async () => {
+    expect((await request(app).get('/api/v1/leads/export?format=xlsx')).status).toBe(401);
+
+    const csv = await request(app).get('/api/v1/leads/export?format=csv').set('authorization', `Bearer ${token}`);
+    expect(csv.status).toBe(200);
+    expect(csv.headers['content-type']).toMatch(/text\/csv/);
+    expect(csv.headers['content-disposition']).toMatch(/leads-\d{4}-\d{2}-\d{2}\.csv/);
+    const linhas = csv.text.split('\r\n');
+    expect(linhas[0]).toContain('"Nome";"Telefone"');
+    expect(linhas).toHaveLength(1 + 3); // cabeçalho + 3 leads
+    expect(csv.text).toContain(LEAD);
+
+    const xlsx = await request(app).get('/api/v1/leads/export?format=xlsx').set('authorization', `Bearer ${token}`).buffer().parse((res, cb) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => cb(null, Buffer.concat(chunks)));
+    });
+    expect(xlsx.status).toBe(200);
+    expect(xlsx.headers['content-type']).toMatch(/spreadsheetml/);
+    expect(xlsx.body.slice(0, 2).toString()).toBe('PK'); // zip = xlsx
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(xlsx.body);
+    expect(wb.worksheets.map((w) => w.name)).toEqual(['Leads', 'Resumo']);
+    expect(wb.getWorksheet('Leads').rowCount).toBe(1 + 3);
+    expect(wb.getWorksheet('Leads').getCell('A1').value).toBe('Nome');
+
+    // Filtro de período vazio: só o cabeçalho
+    const vazio = await request(app).get('/api/v1/leads/export?format=csv&from=2020-01-01T00:00:00Z&to=2020-01-02T00:00:00Z').set('authorization', `Bearer ${token}`);
+    expect(vazio.text.split('\r\n')).toHaveLength(1);
   });
 
   test('API: corretor não pode enviar tenantId no body', async () => {
@@ -316,6 +416,17 @@ run('fluxo WhatsApp -> IA -> classificação (integração)', () => {
       .post('/api/v1/auth/login')
       .send({ tenant: 'outra-conta', email: process.env.SEED_ADMIN_EMAIL, password: process.env.SEED_ADMIN_PASSWORD });
     expect(cross.status).toBe(401);
+  });
+
+  test('entrada automática local emite a sessão do admin do seed', async () => {
+    const res = await request(app).post('/api/v1/dev/login');
+    expect(res.status).toBe(200);
+    expect(res.body.data.user).toMatchObject({ email: process.env.SEED_ADMIN_EMAIL, role: 'admin' });
+    expect(res.body.data.user).not.toHaveProperty('passwordHash');
+    const me = await request(app).get('/api/v1/properties').set('authorization', `Bearer ${res.body.data.accessToken}`);
+    expect(me.status).toBe(200);
+    const rot = await request(app).post('/api/v1/auth/refresh').send({ refreshToken: res.body.data.refreshToken });
+    expect(rot.status).toBe(200);
   });
 
   test('login com senha errada', async () => {

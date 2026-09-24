@@ -99,4 +99,79 @@ function mergeQualification(current = {}, extracted = {}) {
   return out;
 }
 
-module.exports = { scoreLead, mergeQualification, GUARANTEES, RULES, KEY_FACTS };
+/**
+ * Imóveis ativos compatíveis com o que o lead já disse, excluindo o atual.
+ * Compatível = scoreLead sem motivo de desqualificação. Ordena por score (desc) e preço (asc).
+ * Função pura: recebe objetos planos e devolve os imóveis escolhidos.
+ */
+function findAlternatives(qualification = {}, properties = [], currentId = null, max = 3) {
+  return properties
+    .filter((p) => p && p.isActive !== false && p.id !== currentId)
+    .map((p) => ({ property: p, ...scoreLead(qualification, p) }))
+    .filter((r) => r.disqualifyReasons.length === 0)
+    .sort((a, b) => b.score - a.score || Number(a.property.priceCents) - Number(b.property.priceCents))
+    .slice(0, max)
+    .map((r) => r.property);
+}
+
+const MAX_OPEN_QUESTIONS = 10;
+
+/**
+ * Junta as dúvidas sem resposta já registradas com as novas desta rodada.
+ * Normaliza espaços, ignora duplicadas (sem diferenciar maiúsculas) e mantém no máximo MAX_OPEN_QUESTIONS.
+ */
+function mergeOpenQuestions(current = [], extracted = []) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of [...(Array.isArray(current) ? current : []), ...(Array.isArray(extracted) ? extracted : [])]) {
+    const q = String(raw || '').replace(/\s+/g, ' ').trim();
+    if (q.length < 3) continue;
+    const key = q.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(q.slice(0, 200));
+  }
+  return out.slice(-MAX_OPEN_QUESTIONS);
+}
+
+const GUARANTEE_LABEL = {
+  fiador: 'fiador',
+  caucao: 'caução',
+  seguro_fianca: 'seguro-fiança',
+  titulo_capitalizacao: 'título de capitalização',
+  sem_garantia: 'sem garantia',
+};
+const CLASS_LABEL = { quente: 'quente', morno: 'morno', frio: 'frio', indefinido: 'ainda qualificando' };
+const brl = (cents) => (Number(cents) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+/**
+ * Resumo determinístico para o corretor, usado quando a IA não mandou o dela
+ * (ex.: transferência automática por "quente + preferência de visita").
+ */
+function describeQualification({ name, property, qualification = {}, visitPreference, classification }) {
+  const q = qualification;
+  const partes = [];
+  partes.push(`${name || 'Lead sem nome'}: interesse em ${property ? `#${property.code} (${property.title})` : 'imóvel não definido'}, classificação ${CLASS_LABEL[classification] || classification}.`);
+  const fatos = [];
+  if (isKnown(q.monthlyIncomeCents)) fatos.push(`renda ${brl(q.monthlyIncomeCents)}`);
+  if (isKnown(q.guarantee)) fatos.push(`garantia ${GUARANTEE_LABEL[q.guarantee] || q.guarantee}`);
+  if (isKnown(q.occupants)) fatos.push(`${q.occupants} morador${q.occupants === 1 ? '' : 'es'}`);
+  if (isKnown(q.hasPets)) fatos.push(q.hasPets ? 'tem pet' : 'sem pet');
+  if (isKnown(q.moveInDays)) fatos.push(`mudança em ${q.moveInDays} dias`);
+  if (fatos.length) partes.push(`Informou: ${fatos.join(', ')}.`);
+  if (visitPreference) partes.push(`Quer visitar: ${visitPreference}.`);
+  else if (q.wantsVisit === true) partes.push('Quer visitar, sem dia definido.');
+  return partes.join(' ');
+}
+
+module.exports = {
+  scoreLead,
+  mergeQualification,
+  findAlternatives,
+  mergeOpenQuestions,
+  describeQualification,
+  GUARANTEES,
+  RULES,
+  KEY_FACTS,
+  MAX_OPEN_QUESTIONS,
+};

@@ -16,7 +16,7 @@ const { extractPropertyCode } = require('./whatsapp/webhookParser');
 const wa = require('./whatsapp/client');
 const ai = require('./ai/claude.client');
 const { buildSystemPrompt } = require('./ai/prompt');
-const { scoreLead, mergeQualification } = require('./scoring');
+const { scoreLead, mergeQualification, findAlternatives, mergeOpenQuestions, describeQualification } = require('./scoring');
 const notification = require('./notification.service');
 
 const OPT_OUT_RE = /^\s*(sair|parar|pare|stop|cancelar|descadastrar)\s*[.!]*\s*$/i;
@@ -207,11 +207,21 @@ async function processReply(tenant, leadId) {
     ).reverse();
 
     const property = lead.propertyId ? await Property.findByPk(lead.propertyId, { transaction: t }) : null;
-    const activeProperties = property
-      ? []
-      : await Property.findAll({ where: { isActive: true }, order: [['createdAt', 'DESC']], limit: 10, transaction: t });
+    // Sempre carrega os ativos: sem imóvel, a IA pergunta qual; com imóvel, viram alternativas compatíveis.
+    const activeProperties = await Property.findAll({ where: { isActive: true }, order: [['createdAt', 'DESC']], limit: 20, transaction: t });
+    const plainLead = lead.get({ plain: true });
+    const alternatives = property
+      ? findAlternatives(plainLead.qualification, activeProperties.map((p) => p.get({ plain: true })), property.id)
+      : [];
 
-    return { lead: lead.get({ plain: true }), history, property, activeProperties, cutoff: lastInbound.createdAt };
+    return {
+      lead: plainLead,
+      history,
+      property,
+      activeProperties: property ? [] : activeProperties,
+      alternatives,
+      cutoff: lastInbound.createdAt,
+    };
   });
   if (!ctx) return;
 
@@ -220,6 +230,7 @@ async function processReply(tenant, leadId) {
     tenant,
     property: ctx.property,
     activeProperties: ctx.activeProperties,
+    alternatives: ctx.alternatives,
     lead: ctx.lead,
     today: new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
   });
@@ -232,14 +243,19 @@ async function processReply(tenant, leadId) {
 
     let property = ctx.property;
     let propertyId = lead.propertyId;
-    if (!propertyId && turn.propertyCode) {
-      property = await Property.findOne({ where: { code: turn.propertyCode, isActive: true }, transaction: t });
-      if (property) propertyId = property.id;
+    // Vincula o imóvel indicado pela IA, ou troca quando o lead passou a querer outro (alternativa oferecida).
+    if (turn.propertyCode && turn.propertyCode !== (property ? property.code : null)) {
+      const found = await Property.findOne({ where: { code: turn.propertyCode, isActive: true }, transaction: t });
+      if (found) {
+        property = found;
+        propertyId = found.id;
+      }
     }
 
     const qualification = mergeQualification(lead.qualification, turn.facts);
     const { score, classification, disqualifyReasons } = scoreLead(qualification, property && property.get({ plain: true }));
     const visitPreference = turn.visitPreference || lead.visitPreference;
+    const openQuestions = mergeOpenQuestions(lead.openQuestions, turn.openQuestions);
 
     const patch = {
       propertyId,
@@ -248,6 +264,7 @@ async function processReply(tenant, leadId) {
       classification,
       disqualifyReasons,
       visitPreference,
+      openQuestions,
       lastRepliedInboundAt: ctx.cutoff,
     };
 
@@ -259,6 +276,17 @@ async function processReply(tenant, leadId) {
         botActive: false,
         handoffAt: new Date(),
         handoffReason: (turn.handoffReason || (visitPreference ? 'visita_solicitada' : 'solicitado_pela_ia')).slice(0, 300),
+        // Resumo da IA quando ela transferiu; senão um resumo determinístico dos fatos.
+        handoffSummary: (
+          turn.handoffSummary ||
+          describeQualification({
+            name: lead.displayName,
+            property: property && property.get({ plain: true }),
+            qualification,
+            visitPreference,
+            classification,
+          })
+        ).slice(0, 1000),
       });
     } else if (turn.nextAction === 'encerrar') {
       Object.assign(patch, { status: 'descartado', botActive: false });

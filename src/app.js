@@ -1,5 +1,6 @@
 'use strict';
 
+const path = require('path');
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
@@ -13,7 +14,15 @@ const app = express();
 
 app.disable('x-powered-by');
 app.set('trust proxy', 1); // atrás do Traefik
-app.use(helmet());
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      // Em dev o painel roda em http://localhost; o upgrade para https quebraria as chamadas.
+      directives: { 'upgrade-insecure-requests': env.isDev ? null : [] },
+    },
+  })
+);
 app.use(
   pinoHttp({
     logger,
@@ -24,6 +33,12 @@ app.use(
 );
 
 app.get('/health', (_req, res) => res.json({ success: true, data: { status: 'ok' } }));
+
+// Painel web (estático, mesma origem da API) e página de privacidade.
+const publicDir = path.join(__dirname, '..', 'public');
+app.get('/', (_req, res) => res.redirect('/painel/'));
+app.use('/painel', express.static(path.join(publicDir, 'painel'), { index: 'index.html' }));
+app.get('/privacidade', (_req, res) => res.sendFile(path.join(publicDir, 'privacidade.html')));
 
 // Webhook ANTES do express.json: precisa do corpo bruto.
 app.use('/webhooks', webhooks);

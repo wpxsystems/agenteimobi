@@ -1,14 +1,18 @@
 'use strict';
 
 // Controllers finos: validam (Zod), chamam o service, serializam e respondem { success, data }.
+const crypto = require('crypto');
 const env = require('../config/env');
 const logger = require('../config/logger');
+const AppError = require('../errors/AppError');
+const { Tenant } = require('../models');
 const schemas = require('../schemas');
 const serialize = require('../serializers');
 const authService = require('../services/auth.service');
 const propertyService = require('../services/property.service');
 const leadService = require('../services/lead.service');
 const metricsService = require('../services/metrics.service');
+const exportService = require('../services/export.service');
 const conversation = require('../services/conversation.service');
 const { isValidSignature } = require('../services/whatsapp/signature');
 const { parseWebhook } = require('../services/whatsapp/webhookParser');
@@ -57,6 +61,11 @@ const properties = {
     const { src } = schemas.linkQuery.parse(req.query);
     ok(res, await propertyService.links(req.auth.tenantId, id, src));
   },
+  async openQuestions(req, res) {
+    const { id } = schemas.idParam.parse(req.params);
+    const rows = await propertyService.openQuestions(req.auth.tenantId, id);
+    ok(res, rows.map(serialize.openQuestion));
+  },
 };
 
 // ---------------- Leads ----------------
@@ -84,6 +93,35 @@ const leads = {
     await leadService.sendMessage(req.auth.tenantId, id, text);
     ok(res, null, 202);
   },
+  /** Arquivo (CSV ou Excel) com os leads dos mesmos filtros do funil. Resposta binária, não { success, data }. */
+  async export(req, res) {
+    const { format, ...filters } = schemas.leadExport.parse(req.query);
+    const leads = await leadService.listForExport(req.auth.tenantId, filters);
+    const rows = leads.map((l) => exportService.leadRow(serialize.lead(l)));
+    const nome = `leads-${new Date().toISOString().slice(0, 10)}`;
+    if (format === 'xlsx') {
+      const funil = await metricsService.funnel(req.auth.tenantId, filters);
+      const imovel = filters.propertyId ? await propertyService.get(req.auth.tenantId, filters.propertyId) : null;
+      const fmt = (iso) => new Date(iso).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+      res.setHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('content-disposition', `attachment; filename="${nome}.xlsx"`);
+      await exportService.writeXlsx(
+        {
+          rows,
+          resumo: {
+            funnel: funil,
+            periodo: filters.from || filters.to ? `${filters.from ? fmt(filters.from) : 'início'} a ${filters.to ? fmt(filters.to) : 'hoje'}` : 'Todo o período',
+            imovel: imovel ? `${imovel.code} · ${imovel.title}` : 'Todos os imóveis',
+          },
+        },
+        res
+      );
+      return res.end();
+    }
+    res.setHeader('content-type', 'text/csv; charset=utf-8');
+    res.setHeader('content-disposition', `attachment; filename="${nome}.csv"`);
+    return res.send(exportService.toCsv(rows));
+  },
 };
 
 // ---------------- Métricas ----------------
@@ -91,6 +129,11 @@ const metrics = {
   async funnel(req, res) {
     const query = schemas.funnelQuery.parse(req.query);
     ok(res, await metricsService.funnel(req.auth.tenantId, query));
+  },
+  async overview(req, res) {
+    const query = schemas.funnelQuery.parse(req.query);
+    const data = await metricsService.overview(req.auth.tenantId, query);
+    ok(res, { ...data, awaiting: data.awaiting.map(serialize.awaitingLead) });
   },
 };
 
@@ -144,4 +187,44 @@ const redirect = {
   },
 };
 
-module.exports = { auth, properties, leads, metrics, webhook, redirect };
+// ---------------- Dev: simulador de WhatsApp (rotas montadas só fora de produção) ----------------
+const dev = {
+  /** Entrada automática local (DEV_AUTO_LOGIN=true): mesma resposta do login normal. */
+  async login(_req, res) {
+    const { user, accessToken, refreshToken } = await authService.devLogin();
+    ok(res, { user: serialize.user(user), accessToken, refreshToken });
+  },
+  async status(req, res) {
+    const tenant = await Tenant.findByPk(req.auth.tenantId);
+    ok(res, {
+      waMock: env.waMock,
+      aiConfigured: !/^PREENCHER/i.test(env.ANTHROPIC_API_KEY),
+      model: env.ANTHROPIC_MODEL,
+      debounceMs: env.REPLY_DEBOUNCE_MS,
+      tenant: tenant
+        ? { slug: tenant.slug, name: tenant.name, assistantName: tenant.assistantName, waConfigured: Boolean(tenant.waPhoneNumberId) }
+        : null,
+    });
+  },
+  async inbound(req, res) {
+    const { phone, name, text } = schemas.devInbound.parse(req.body);
+    const tenant = await Tenant.findByPk(req.auth.tenantId);
+    if (!tenant?.waPhoneNumberId) {
+      throw new AppError('WA_NOT_CONFIGURED', 'Número de WhatsApp da conta não configurado (seed)', 409);
+    }
+    // Mesmo formato normalizado que o webhook produz: passa pelo fluxo real de atendimento.
+    await conversation.handleInbound({
+      phoneNumberId: tenant.waPhoneNumberId,
+      waMessageId: `sim-${crypto.randomUUID()}`,
+      waId: phone,
+      name: name || null,
+      type: 'text',
+      text,
+      timestamp: new Date(),
+      referralSource: null,
+    });
+    ok(res, null, 202);
+  },
+};
+
+module.exports = { auth, properties, leads, metrics, webhook, redirect, dev };
