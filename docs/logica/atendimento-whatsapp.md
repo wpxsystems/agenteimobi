@@ -1,0 +1,216 @@
+# Atendimento WhatsApp com IA: lógica, integridade e fluxo
+
+Fonte analisada: `src/controllers/index.js`, `src/services/conversation.service.js`, `src/services/scoring.js`, `src/services/ai/*.js`, `src/services/whatsapp/*.js`, `src/services/property.service.js`, `src/jobs/followUp.job.js`, `src/db/migrations/0001_init.js` · Gerado em: 24/09/2026
+
+## 1. Propósito
+
+O interessado vê o imóvel (no Marketplace, Instagram, OLX etc.) e clica num link. Esse link abre o WhatsApp da imobiliária com uma mensagem já escrita, contendo o código do imóvel (`#CASA01`). A partir daí, o sistema:
+
+1. recebe a mensagem pelo webhook da WhatsApp Cloud API;
+2. conversa com o lead usando o Claude, com base nos dados cadastrados do imóvel;
+3. extrai fatos de qualificação (renda, garantia, moradores, pet, prazo e interesse em visita);
+4. **calcula a classificação no backend** (quente, morno, frio ou indefinido);
+5. transfere para um humano quando o lead está pronto para visitar ou pede atendimento;
+6. mede o funil: cliques → conversas → qualificados → visitas.
+
+## 2. Fluxo
+
+### Sequência de uma mensagem
+
+```mermaid
+sequenceDiagram
+  participant L as Lead (WhatsApp)
+  participant M as Meta Cloud API
+  participant W as webhook.receive
+  participant C as conversation.service
+  participant DB as Postgres (RLS)
+  participant AI as Claude
+  L->>M: "Olá! Tenho interesse no imóvel #CASA01"
+  M->>W: POST /webhooks/whatsapp (assinado)
+  W->>W: valida X-Hub-Signature-256 (corpo bruto)
+  W-->>M: 200 (imediato)
+  W->>C: handleInbound(msg normalizada)
+  C->>DB: tx: upsert lead + insert msg (idempotente) + vincula imóvel pelo #código
+  C->>C: debounce por lead (REPLY_DEBOUNCE_MS)
+  C->>DB: tx A: carrega lead, histórico, imóvel
+  C->>AI: runTurn(system prompt + histórico), tool obrigatória
+  AI-->>C: { resposta, fatos, próxima ação }
+  C->>DB: tx C: merge fatos + scoreLead() + handoff? + marca respondido
+  C->>M: sendText(resposta [+ aviso de privacidade na 1ª])
+  C->>DB: tx: grava msg de saída
+  C-->>C: notifyHandoff (template ao dono) se transferido
+```
+
+### Máquina de estados do lead (`aim_lead.status`)
+
+```mermaid
+stateDiagram-v2
+  [*] --> novo: 1ª mensagem (upsert)
+  novo --> em_atendimento: registerInbound
+  em_atendimento --> transferido: IA pede humano OU quente + preferência de visita
+  em_atendimento --> descartado: IA "encerrar"
+  em_atendimento --> opt_out: lead manda SAIR
+  transferido --> em_atendimento: PATCH botActive=true
+  transferido --> visita_agendada: PATCH (corretor)
+  em_atendimento --> visita_agendada: PATCH (corretor)
+  visita_agendada --> descartado: PATCH
+  opt_out --> [*]
+```
+
+`opt_out` é final: `lead.service.update` recusa qualquer alteração (409) e o webhook ignora novas mensagens.
+
+## 3. Passo a passo
+
+### Passo 1: `webhook.receive` (`src/controllers/index.js:108`)
+- **Entrada:** corpo **bruto** (`express.raw`) e header `x-hub-signature-256`.
+- **Lógica:** se `isValidSignature` falha, responde 401. Se o JSON é inválido, 400. Caso contrário, responde **200 antes** de processar (a Meta reenvia se demorar) e processa as mensagens em sequência.
+- **Efeitos:** nenhum antes do 200.
+- **Invariante:** nada é gravado sem assinatura válida.
+- **🧪 Teste:** `integration.test.js` › "assinatura inválida = 401 e nada é gravado".
+
+### Passo 2: `isValidSignature` (`src/services/whatsapp/signature.js:10`)
+- **Lógica:** `esperado = HMAC_SHA256(WA_APP_SECRET, corpo_bruto)` em hex; compara com `timingSafeEqual`. Rejeita algoritmo diferente de `sha256`, hex malformado e corpo que não seja `Buffer`.
+- **🧪 Teste:** `unit.test.js` › "assinatura do webhook" (5 casos).
+
+### Passo 3: `parseWebhook` / `extractPropertyCode` (`src/services/whatsapp/webhookParser.js:24`, `:57`)
+- **Saída:** `[{ phoneNumberId, waMessageId, waId, name, type, text, referralSource }]`. Ignora `statuses` e remetentes que não sejam 8 a 15 dígitos. Texto é truncado em 4000 caracteres.
+- **Código do imóvel:** regex `#([A-Za-z0-9]{3,12})`, convertido para maiúsculas.
+- **🧪 Teste:** `unit.test.js` › "parser do webhook".
+
+### Passo 4: `registerInbound` (`src/services/conversation.service.js:42`)
+- **Entrada:** mensagem normalizada.
+- **Lógica:**
+  1. Resolve o tenant por `wa_phone_number_id` (tabela `aim_tenant`, sem RLS e só leitura para `aim_app`). Se o número for desconhecido, só loga.
+  2. Numa transação com tenant (`inTx`):
+     - faz `INSERT … ON CONFLICT (tenant_id, wa_id)` do lead, sem corrida;
+     - faz `INSERT` da mensagem com `ON CONFLICT (tenant_id, wa_message_id) DO NOTHING`. Se nada foi inserido, é duplicata e a ação vira `ignore`;
+     - trava o lead (`FOR UPDATE`), atualiza `last_inbound_at`, zera `followup_count` e muda `novo` para `em_atendimento`;
+     - se houver `#CODIGO` e o lead ainda não tiver imóvel, vincula o imóvel ativo com esse código.
+  3. Decide a ação, nesta ordem:
+     - status `opt_out` ou `descartado` → `ignore`;
+     - texto de opt-out → `opt_out` (grava `opt_out_at` e `bot_active=false`);
+     - `bot_active=false` → `ignore`;
+     - texto vazio (áudio, imagem) → `unsupported`;
+     - nos demais casos → `reply`.
+- **Invariantes:** uma mensagem da Meta equivale a no máximo uma linha em `aim_message`. Há um lead por `(tenant, telefone)`.
+- **🧪 Teste:** integração › "lead qualificado…" (reenvio do mesmo wamid não duplica) e "SAIR = opt-out".
+
+### Passo 5: `scheduleReply` / `runReply` (`:156`, `:167`)
+- **Lógica:** debounce em memória por lead. Cada mensagem nova reinicia o timer. Se já houver uma resposta em andamento, marca `pending` e roda de novo ao terminar. Resultado: 3 mensagens seguidas geram **1** chamada à IA com as 3 no histórico.
+- **Limite:** estado em memória, então vale para **uma instância** só (ver §6).
+- **🧪 Teste:** integração › "mensagens em sequência geram UMA resposta".
+
+### Passo 6: `processReply` (`:185`)
+- **A) Contexto (tx curta):** aborta se o bot estiver desligado, se o status for `opt_out`, `descartado` ou `transferido`, se a última mensagem recebida já foi respondida (`created_at <= last_replied_inbound_at`) ou se passou da janela de 24h. Carrega as últimas `HISTORY_MAX_MESSAGES` mensagens e o imóvel. Sem imóvel, carrega até 10 imóveis ativos para a IA perguntar.
+- **B) IA (fora de transação):** `buildSystemPrompt` + `runTurn`.
+- **C) Aplicação (tx, lead travado):**
+  - se um humano desligou o bot enquanto a IA pensava, descarta a resposta;
+  - `qualification = mergeQualification(atual, fatos_novos)`, sem apagar fato já conhecido;
+  - `scoreLead(qualification, imóvel)` (Passo 7);
+  - **handoff** se `proxima_acao = transferir_humano` **ou** (`classificação = quente` **e** há preferência de visita): muda para `status=transferido` e `bot_active=false` e grava `handoff_at`/`handoff_reason`;
+  - `encerrar` muda para `status=descartado` e `bot_active=false`;
+  - na 1ª resposta, anexa o aviso de privacidade com opção SAIR e grava `privacy_notice_sent_at`;
+  - grava `last_replied_inbound_at = created_at` da última mensagem considerada.
+- **D) Envio:** `sendAndRecord`. **Se o envio falhar**, restaura `last_replied_inbound_at` e `privacy_notice_sent_at` anteriores para que a recuperação tente de novo; a classificação é mantida.
+- **E)** `notifyHandoff` se houve transferência. Uma falha aqui só é logada.
+- **🧪 Teste:** integração › "lead qualificado vira quente e é transferido", "falha no envio… desfaz respondido".
+
+### Passo 7: `scoreLead` (`src/services/scoring.js:31`), classificação no backend
+A IA **não** classifica: ela só extrai fatos, e esta função pura decide. Com `custo_mensal = price_cents + fees_cents`:
+
+| Regra | Condição | Efeito |
+|---|---|---|
+| Renda (só aluguel) | `renda / custo_mensal < 2,5` | desqualifica: `renda_insuficiente` |
+| | `≥ 3,0` | +30 |
+| | entre 2,5 e 3,0 | +15 |
+| Garantia (só aluguel) | aceita, ou imóvel sem lista | +20; senão `garantia_nao_aceita` |
+| Pet | tem pet e imóvel não aceita | `pet_nao_permitido`; senão +5 |
+| Moradores | `> max_occupants` | `moradores_acima_limite`; senão +5 |
+| Prazo de mudança | `≤ 30 dias` / `≤ 60 dias` | +20 / +10 |
+| Quer visitar | `true` | +20 |
+
+**Classificação**, avaliada nesta ordem:
+
+1. qualquer motivo de desqualificação → **frio**;
+2. `score ≥ 70` → **quente**;
+3. menos de 3 dos 5 fatos-chave conhecidos → **indefinido** (ainda qualificando);
+4. `score ≥ 40` → **morno**;
+5. nos demais casos → **frio**.
+
+Sem imóvel definido, o resultado é **indefinido**.
+
+- **Exemplo (teste):** aluguel de R$ 2.000 + R$ 150 e renda de R$ 8.000 (3,72x) dão 30. Com garantia caução (+20), sem pet (+5), 2 moradores (+5), mudança em 20 dias (+20) e interesse em visitar (+20), o score é **100 → quente**.
+- **🧪 Teste:** `unit.test.js` › "scoring" (13 casos, incluindo os limites 2,5x, 3x, 30/60/61 dias).
+
+### Passo 8: `runTurn` (`src/services/ai/claude.client.js:99`)
+- **Lógica:** o histórico vira mensagens alternadas `user`/`assistant`, começando por `user` (`toClaudeMessages`). A chamada força `tool_choice` em `registrar_atendimento`. A saída é **não confiável** e passa por validação Zod (`outputSchema`): tamanhos, enums, inteiros e faixas. Em seguida, `toInternal` converte a renda de reais para centavos com `Math.round(x*100)`.
+- **Erros:** `AI_INVALID_OUTPUT` (502) quando o formato é inválido; `AI_NOTHING_TO_ANSWER` quando a última mensagem não é do lead.
+- **🧪 Teste:** `unit.test.js` › "cliente da IA".
+
+### Passo 9: job periódico (`src/jobs/followUp.job.js:44`)
+1. **`recoverUnanswered`** (`conversation.service.js:296`) procura leads ativos com mensagem recebida sem resposta, entre 1 minuto e 2 horas atrás, e reagenda a resposta. Isso cobre reinício do processo, falha da IA e falha de envio.
+2. **Follow-up:** um `UPDATE … RETURNING` atômico reivindica leads que:
+   - estão `em_atendimento` com bot ligado e `followup_count = 0`;
+   - tiveram a última mensagem enviada por nós há mais de `FOLLOWUP_AFTER_MINUTES`;
+   - mandaram a última mensagem há menos de 23h.
+
+   Cada lead recebe **uma** mensagem de retomada. Fora da janela de 24h não há envio, porque exigiria template.
+- **🧪 Teste:** verificado com dois leads, um dentro e outro fora da janela: só o de dentro foi reivindicado.
+
+### Passo 10: link rastreado (`property.service.js:68`, `controllers/index.js:137`)
+- `GET /r/:slug/:code?src=marketplace` registra `aim_link_click` (sem IP nem user-agent) e responde 302 para `https://wa.me/<numero>?text=Olá! Tenho interesse no imóvel #CODIGO (...)`.
+- **🧪 Teste:** integração › "clique no link rastreado conta e redireciona".
+
+## 4. Integridade das partes
+
+### Contratos
+
+| Produz | Consome | Formato | Quebra se… |
+|---|---|---|---|
+| `parseWebhook` | `registerInbound` | `{ phoneNumberId, waMessageId, waId, name, type, text, referralSource }` | a Meta mudar o payload (versão da Graph API) |
+| `buildWaLink` | `extractPropertyCode` | texto com `#CODIGO` | alguém mudar o texto do link sem manter o `#` |
+| `runTurn` (via `toInternal`) | `processReply` | `{ reply, facts{monthlyIncomeCents,…}, propertyCode, visitPreference, nextAction, handoffReason }` | renomear campo da tool sem atualizar `outputSchema`/`toInternal` |
+| `scoreLead` | `aim_lead` / serializer | `{ score, classification, disqualifyReasons }` | adicionar classificação sem atualizar o CHECK da migration e o schema `leadList` |
+| `aim_lead.qualification` (jsonb) | serializer `lead` | chaves camelCase de `KEY_FACTS` + `wantsVisit` | renomear chave: leads antigos ficam com o campo vazio |
+
+### Invariantes globais
+- Toda query de tabela com `tenant_id` roda dentro de `inTx(tenantId)`. Sem isso, o RLS devolve 0 linhas, falhando de forma fechada.
+- `tenant_id` nunca vem do body: vem do JWT, do `phone_number_id` do webhook assinado ou do slug do link público.
+- Nenhuma chamada de rede (Meta/Anthropic) acontece dentro de transação.
+- Classificação e taxas do funil são sempre calculadas no backend.
+- Lead em `opt_out` nunca recebe mensagem, nem de humano.
+
+### Matriz de impacto
+
+| Mudança | Revalidar |
+|---|---|
+| Regras/pesos do `scoreLead` | `unit.test.js` › scoring, prompt (o que a IA pergunta), métricas |
+| Campos da tool da IA | `TOOL`, `outputSchema`, `toInternal`, prompt, testes da IA |
+| Status do lead | CHECK da migration, schemas `leadList`/`leadUpdate`, `processReply`, job, diagrama acima |
+| Texto do link wa.me | `extractPropertyCode`, teste do link |
+| `WA_GRAPH_VERSION` | `parseWebhook` e `client.js` contra a doc da Meta |
+
+## 5. Plano de teste por passo
+
+| Passo | Nível | Cenário (sem dados reais) | Esperado |
+|---|---|---|---|
+| Assinatura | lógica | corpo alterado ou secret errado | `false` |
+| Idempotência | sistema | mesmo `wamid` enviado duas vezes | 1 mensagem gravada |
+| Debounce | sistema | 3 mensagens seguidas | 1 chamada à IA com 3 mensagens |
+| Classificação | lógica | limites 2,5x/3x, 30/60/61 dias, pet proibido | tabela do Passo 7 |
+| Handoff | integrado | IA retorna fatos completos + preferência | `transferido`, bot desligado |
+| Falha de envio | integrado | `sendText` rejeita | `last_replied_inbound_at` volta para null e a nova tentativa responde |
+| Opt-out | integrado | "SAIR" e depois "oi" | `opt_out`, IA não é chamada |
+| Multi-tenant | sistema | conta B lista leads e abre lead da conta A | 0 itens / 404 |
+| Refresh | sistema | reusar refresh já rotacionado | 401 e todas as sessões revogadas |
+
+Para rodar: `npm test` roda os unitários. Com Postgres de **teste**, `npm run migrate && npm run seed:dev && TEST_DB=1 npm test`. WhatsApp e Anthropic são mockados.
+
+## 6. Pontos em aberto e limitações do MVP
+- **Uma instância só:** o debounce fica em memória. Para escalar, mover para uma fila (ex.: tabela de jobs com `SKIP LOCKED`). A recuperação do Passo 9 já cobre o reinício.
+- **Mensagem perdida em crash:** se o processo cair entre o 200 e o `registerInbound`, a mensagem não é gravada e a Meta não reenvia. É raro, e a solução é a mesma fila.
+- **Fatos podem ser mentira:** a IA registra o que o lead declara. A classificação filtra quem é compatível, mas não verifica renda. Quem valida é o corretor.
+- **Relógio:** mensagens recebidas usam `now()` do banco e as enviadas usam a hora da aplicação. Com relógios dessincronizados, a ordem do histórico pode inverter por milissegundos.
+- **Token WhatsApp único** (`WA_ACCESS_TOKEN`) para todas as contas. Com vários clientes em números de outras WABAs, o token deve ir por tenant e ser guardado criptografado.
+- **LGPD:** falta rotina de retenção (apagar conversas após X meses) e endpoint de exportação/exclusão a pedido do titular. A política de privacidade precisa citar o envio do texto das conversas ao provedor de IA (Anthropic, nos EUA).
+- **Padrões WPX:** este código foi escrito a partir do resumo das regras (a pasta `wpx-padroes` não foi lida). Conferir com `01`, `03`, `05` e `06` antes de subir para produção.

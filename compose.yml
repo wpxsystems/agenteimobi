@@ -1,0 +1,40 @@
+# Ambiente local / base para a VPS. Em produção, ajustar labels do Traefik conforme o padrão 06-novo-projeto-vps.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: agente_imobi
+      POSTGRES_USER: aim_owner
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD}
+      AIM_APP_PASSWORD: ${AIM_APP_PASSWORD:?defina AIM_APP_PASSWORD}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aim_owner -d agente_imobi"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # Banco sem porta exposta para fora; descomente só para debug local.
+    # ports: ["5432:5432"]
+
+  api:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://aim_app:${AIM_APP_PASSWORD}@db:5432/agente_imobi
+      DATABASE_MIGRATION_URL: postgres://aim_owner:${POSTGRES_PASSWORD}@db:5432/agente_imobi
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    # labels:
+    #   - traefik.enable=true
+    #   - traefik.http.routers.agente-imobi.rule=Host(`<subdominio>.<dominio>`)
+    #   - traefik.http.routers.agente-imobi.tls.certresolver=letsencrypt
+
+volumes:
+  db_data:

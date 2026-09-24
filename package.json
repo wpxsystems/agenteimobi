@@ -1,0 +1,45 @@
+{
+  "name": "agente-imobi",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Atendimento automatizado com IA via WhatsApp para imóveis: conversa, qualifica e classifica leads.",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "migrate": "node src/db/migrate.js up",
+    "migrate:down": "node src/db/migrate.js down",
+    "seed:dev": "node src/db/seed-dev.js",
+    "test": "jest --runInBand"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
+    "bcrypt": "^5.1.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.1",
+    "pg-hstore": "^2.3.4",
+    "pino": "^9.6.0",
+    "pino-http": "^10.4.0",
+    "sequelize": "^6.37.5",
+    "umzug": "^3.8.2",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "setupFiles": [
+      "<rootDir>/tests/setupEnv.js"
+    ]
+  }
+}
