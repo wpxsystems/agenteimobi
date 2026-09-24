@@ -170,6 +170,27 @@ input, select, textarea {
   width: 100%;
 }
 input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--foco); outline-offset: 0; border-color: var(--dourado); }
+
+/* Listas de seleção: a lista aberta segue o mesmo desenho do campo (fundo, borda, dourado no item ativo).
+   Navegadores sem suporte a base-select caem no popup nativo, que ao menos respeita o tema (color-scheme). */
+select { cursor: pointer; }
+option { background: var(--papel); color: var(--tinta); }
+@supports (appearance: base-select) {
+  select, select::picker(select) { appearance: base-select; }
+  select { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 38px; }
+  select::picker-icon { color: var(--tinta-suave); }
+  select:open { border-color: var(--dourado); }
+  select::picker(select) {
+    background: var(--papel); color: var(--tinta); border: 1px solid var(--linha-forte); border-radius: var(--raio-p);
+    padding: 4px; margin-top: 4px; box-shadow: 0 8px 24px rgba(0, 0, 0, .12); min-width: anchor-size(width);
+  }
+  select::picker(select):popover-open { opacity: 1; }
+  option { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 4px; font: inherit; cursor: pointer; }
+  option:hover, option:focus-visible { background: var(--areia); outline: none; }
+  option:checked { background: var(--dourado-tinta); color: var(--tinta); font-weight: 600; }
+  option::checkmark { order: 1; margin-left: auto; color: var(--dourado); }
+  option:disabled { color: var(--tinta-fraca); cursor: default; }
+}
 textarea { resize: vertical; }
 input[readonly] { background: var(--areia); color: var(--tinta-suave); }
 .botao {
