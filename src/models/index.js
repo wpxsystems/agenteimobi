@@ -20,8 +20,22 @@ const Tenant = sequelize.define('aim_tenant', {
   waPhoneNumberId: DataTypes.TEXT,
   waDisplayPhone: DataTypes.TEXT,
   ownerWhatsapp: DataTypes.TEXT,
+  waWabaId: DataTypes.TEXT,
+  // Token do WhatsApp cifrado (src/services/crypto.js). Nunca sai no toJSON nem em serializer.
+  waAccessTokenEnc: DataTypes.TEXT,
+  waTokenUpdatedAt: DataTypes.DATE,
+  onboarding: DataTypes.JSONB,
+  retentionMonths: DataTypes.INTEGER,
+  timezone: DataTypes.TEXT,
+  handoffSlaMinutes: DataTypes.INTEGER,
+  digestEnabled: DataTypes.BOOLEAN,
+  visitSchedule: DataTypes.JSONB,
   isActive: DataTypes.BOOLEAN,
 });
+Tenant.prototype.toJSON = function toJSON() {
+  const { waAccessTokenEnc, ...rest } = this.get();
+  return rest;
+};
 
 const User = sequelize.define(
   'aim_user',
@@ -33,6 +47,7 @@ const User = sequelize.define(
     passwordHash: DataTypes.TEXT,
     role: DataTypes.TEXT,
     isActive: DataTypes.BOOLEAN,
+    emailVerifiedAt: DataTypes.DATE,
   },
   {
     defaultScope: { attributes: { exclude: ['passwordHash'] } },
@@ -95,6 +110,8 @@ const Lead = sequelize.define('aim_lead', {
   privacyNoticeSentAt: DataTypes.DATE,
   optOutAt: DataTypes.DATE,
   source: DataTypes.TEXT,
+  anonymizedAt: DataTypes.DATE,
+  openQuestionsAt: DataTypes.DATE,
 });
 
 const Message = sequelize.define('aim_message', {

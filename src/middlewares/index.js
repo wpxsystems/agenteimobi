@@ -28,10 +28,13 @@ function requireAuth(req, _res, next) {
 const requireRole = (...roles) => (req, _res, next) =>
   roles.includes(req.auth?.role) ? next() : next(AppError.forbidden());
 
+// Nos testes automatizados, dezenas de logins/cadastros saem do mesmo IP em segundos.
+const LIMIT_SCALE = env.NODE_ENV === 'test' ? 100 : 1;
+
 const limiter = (windowMs, max) =>
   rateLimit({
     windowMs,
-    max,
+    max: max * LIMIT_SCALE,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     handler: (_req, res) =>
@@ -40,6 +43,9 @@ const limiter = (windowMs, max) =>
 
 const rateLimits = {
   login: limiter(15 * 60 * 1000, 10),
+  signup: limiter(60 * 60 * 1000, 10),
+  passwordReset: limiter(15 * 60 * 1000, 10),
+  oneTimeLink: limiter(15 * 60 * 1000, 20),
   api: limiter(60 * 1000, 120),
   webhook: limiter(60 * 1000, 600),
   redirect: limiter(60 * 1000, 60),

@@ -29,7 +29,7 @@ async function funnel(tenantId, { propertyId, from, to }) {
          count(*) FILTER (WHERE l.classification = 'frio')::int                   AS frios,
          count(*) FILTER (WHERE l.classification = 'indefinido')::int             AS indefinidos,
          count(*) FILTER (WHERE l.handoff_at IS NOT NULL)::int                    AS transferidos,
-         count(*) FILTER (WHERE l.status = 'visita_agendada')::int                AS visitas
+         count(*) FILTER (WHERE l.status = 'visita_agendada' OR EXISTS (SELECT 1 FROM aim_visit v WHERE v.lead_id = l.id AND v.status <> 'cancelada'))::int AS visitas
        FROM aim_lead l
        WHERE (:propertyId::uuid IS NULL OR l.property_id = :propertyId::uuid)
          AND l.created_at >= :from::timestamptz AND l.created_at < :to::timestamptz`,
@@ -110,7 +110,7 @@ async function overview(tenantId, { propertyId, from, to }) {
               count(l.id) FILTER (WHERE l.classification = 'frio')::int AS frios,
               count(l.id) FILTER (WHERE l.classification = 'indefinido')::int AS indefinidos,
               count(l.id) FILTER (WHERE l.handoff_at IS NOT NULL)::int AS transferidos,
-              count(l.id) FILTER (WHERE l.status = 'visita_agendada')::int AS visitas
+              count(l.id) FILTER (WHERE l.status = 'visita_agendada' OR EXISTS (SELECT 1 FROM aim_visit v WHERE v.lead_id = l.id AND v.status <> 'cancelada'))::int AS visitas
          FROM aim_property p
          LEFT JOIN aim_lead l ON l.property_id = p.id AND l.created_at >= :from::timestamptz AND l.created_at < :to::timestamptz
         GROUP BY p.id

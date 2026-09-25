@@ -2,8 +2,10 @@
 
 /**
  * Orquestra o atendimento pelo WhatsApp:
- *   webhook -> registra mensagem (idempotente) -> debounce por lead -> IA -> classificação -> resposta
+ *   webhook -> job inbound -> registra mensagem (idempotente) -> job reply com debounce -> IA -> classificação -> resposta
  *
+ * O debounce e a serialização por lead ficam na fila do banco (aim_job, ver job.service.js),
+ * então funcionam com várias instâncias e sobrevivem a reinício.
  * Nenhuma chamada de rede (Meta/Anthropic) acontece dentro de transação de banco.
  */
 
@@ -18,18 +20,19 @@ const ai = require('./ai/claude.client');
 const { buildSystemPrompt } = require('./ai/prompt');
 const { scoreLead, mergeQualification, findAlternatives, mergeOpenQuestions, describeQualification } = require('./scoring');
 const notification = require('./notification.service');
+const jobs = require('./job.service');
+const usage = require('./usage.service');
+const billing = require('./billing.service');
+const visits = require('./visit.service');
+const { slotLabel } = require('./time');
 
 const OPT_OUT_RE = /^\s*(sair|parar|pare|stop|cancelar|descadastrar)\s*[.!]*\s*$/i;
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 
 const OPT_OUT_REPLY = 'Tudo certo, não vou mais te enviar mensagens. Se mudar de ideia, é só mandar um oi.';
 const UNSUPPORTED_REPLY = 'Por enquanto consigo ler só mensagens de texto. Pode me escrever sua dúvida?';
-
-// ---------------------------------------------------------------------------
-// Estado em memória do debounce (MVP: uma instância). Ver docs/logica para escalar.
-// ---------------------------------------------------------------------------
-const timers = new Map(); // leadId -> Timeout
-const running = new Map(); // leadId -> { pending: boolean }
+// Conta sem direito a conversa nova: resposta fixa, sem IA, e o lead vai para o corretor.
+const BLOCKED_REPLY = 'Olá! Recebemos sua mensagem. Um corretor vai continuar o seu atendimento por aqui em breve.';
 
 function privacyNotice() {
   return `\n\nSeus dados são usados só para este atendimento (${env.PRIVACY_URL}). Para não receber mais mensagens, responda SAIR.`;
@@ -37,12 +40,15 @@ function privacyNotice() {
 
 /**
  * Registra uma mensagem recebida. Idempotente por wa_message_id (a Meta reenvia webhooks).
+ * A conta vem do job (resolvida ao enfileirar). Sem ela, resolve pelo phone_number_id.
  * @returns {{ tenant, leadId, action: 'reply'|'opt_out'|'unsupported'|'ignore' } | null}
  */
-async function registerInbound(msg) {
-  const tenant = await Tenant.findOne({ where: { waPhoneNumberId: msg.phoneNumberId, isActive: true } });
+async function registerInbound(msg, tenantId) {
+  const tenant = tenantId
+    ? await Tenant.findOne({ where: { id: tenantId, isActive: true } })
+    : await Tenant.findOne({ where: { waPhoneNumberId: msg.phoneNumberId, isActive: true } });
   if (!tenant) {
-    logger.warn({ phoneNumberId: msg.phoneNumberId }, 'Webhook de número não cadastrado');
+    logger.warn({ phoneNumberId: msg.phoneNumberId }, 'Mensagem de conta inexistente ou desativada');
     return null;
   }
 
@@ -109,7 +115,7 @@ async function registerInbound(msg) {
 
 /** Envia texto e registra a mensagem de saída. */
 async function sendAndRecord(tenant, leadId, waId, body, author) {
-  const waMessageId = await wa.sendText(tenant.waPhoneNumberId, waId, body);
+  const waMessageId = await wa.sendText(tenant, waId, body);
   await inTx(tenant.id, async (t) => {
     await Message.create(
       { tenantId: tenant.id, leadId, direction: 'out', author, waMessageId, msgType: 'text', body },
@@ -132,9 +138,37 @@ function markInboundAnswered(tenantId, leadId) {
   );
 }
 
-/** Ponto de entrada do webhook para cada mensagem normalizada. */
-async function handleInbound(msg) {
-  const res = await registerInbound(msg);
+/**
+ * Entrada do webhook: resolve a conta de cada mensagem pelo phone_number_id e grava um job inbound.
+ * Número não cadastrado é ignorado com aviso. Erro de banco sobe para o controller responder 500.
+ * @returns {Promise<number>} quantas mensagens foram enfileiradas
+ */
+async function acceptInbound(messages) {
+  const tenants = new Map();
+  let queued = 0;
+  for (const msg of messages) {
+    if (!tenants.has(msg.phoneNumberId)) {
+      tenants.set(msg.phoneNumberId, await Tenant.findOne({ where: { waPhoneNumberId: msg.phoneNumberId, isActive: true } }));
+    }
+    const tenant = tenants.get(msg.phoneNumberId);
+    if (!tenant) {
+      logger.warn({ phoneNumberId: msg.phoneNumberId }, 'Webhook de número não cadastrado');
+      continue;
+    }
+    await jobs.enqueueInbound(tenant.id, msg);
+    queued += 1;
+  }
+  return queued;
+}
+
+/** Simulador do painel (fora de produção): enfileira direto na conta logada, com ou sem número. */
+async function acceptSimulated(tenantId, msg) {
+  await jobs.enqueueInbound(tenantId, msg);
+}
+
+/** Processa uma mensagem normalizada do webhook (roda no worker, a partir do job inbound). */
+async function handleInbound(msg, tenantId) {
+  const res = await registerInbound(msg, tenantId);
   if (!res) return;
   const { tenant, leadId, action } = res;
 
@@ -144,44 +178,16 @@ async function handleInbound(msg) {
     await sendAndRecord(tenant, leadId, msg.waId, UNSUPPORTED_REPLY, 'system');
     await markInboundAnswered(tenant.id, leadId);
   } else if (action === 'reply') {
-    scheduleReply(tenant, leadId);
+    // Debounce: o lead costuma mandar 2-3 mensagens seguidas. Cada uma empurra o horário da
+    // resposta pendente, e a IA responde tudo de uma vez após REPLY_DEBOUNCE_MS sem mensagem nova.
+    await jobs.enqueueReply(tenant.id, leadId);
   }
 }
 
 /**
- * Debounce: o lead costuma mandar 2-3 mensagens seguidas. Espera REPLY_DEBOUNCE_MS
- * sem mensagem nova e responde tudo de uma vez. Se já houver resposta em andamento,
- * marca pendente e roda de novo ao terminar.
+ * Uma rodada de resposta da IA. Roda no worker (job reply), nunca duas ao mesmo tempo para o
+ * mesmo lead. Lança erro em falha da IA ou do envio: o worker agenda nova tentativa.
  */
-function scheduleReply(tenant, leadId) {
-  clearTimeout(timers.get(leadId));
-  timers.set(
-    leadId,
-    setTimeout(() => {
-      timers.delete(leadId);
-      runReply(tenant, leadId);
-    }, env.REPLY_DEBOUNCE_MS)
-  );
-}
-
-async function runReply(tenant, leadId) {
-  const state = running.get(leadId);
-  if (state) {
-    state.pending = true;
-    return;
-  }
-  running.set(leadId, { pending: false });
-  try {
-    await processReply(tenant, leadId);
-  } catch (err) {
-    logger.error({ err: { code: err.code, message: err.message }, leadId }, 'Falha ao responder lead');
-  } finally {
-    const { pending } = running.get(leadId);
-    running.delete(leadId);
-    if (pending) runReply(tenant, leadId);
-  }
-}
-
 async function processReply(tenant, leadId) {
   // ---- A) Carrega contexto (transação curta) ----
   const ctx = await inTx(tenant.id, async (t) => {
@@ -196,6 +202,13 @@ async function processReply(tenant, leadId) {
     if (!lastInbound) return null;
     if (lead.lastRepliedInboundAt && lastInbound.createdAt <= lead.lastRepliedInboundAt) return null; // já respondido
     if (Date.now() - new Date(lastInbound.createdAt).getTime() > WINDOW_MS) return null; // fora da janela
+
+    // Plano: conversa nova sem assinatura ativa ou acima do limite do mês vai direto para humano.
+    const gate = await billing.conversationGate(leadId, t);
+    if (!gate.ok) {
+      const property = lead.propertyId ? await Property.findByPk(lead.propertyId, { transaction: t }) : null;
+      return { blocked: gate.reason, cutoff: lastInbound.createdAt, property };
+    }
 
     const history = (
       await Message.findAll({
@@ -213,6 +226,11 @@ async function processReply(tenant, leadId) {
     const alternatives = property
       ? findAlternatives(plainLead.qualification, activeProperties.map((p) => p.get({ plain: true })), property.id)
       : [];
+    // Horários livres de visita: só com imóvel definido e lead que ainda pode visitar.
+    const visitSlots =
+      property && plainLead.classification !== 'frio'
+        ? (await visits.offerForLead(tenant, t)).map((s) => ({ id: s.toISOString(), label: slotLabel(s, tenant.timezone || 'America/Sao_Paulo') }))
+        : [];
 
     return {
       lead: plainLead,
@@ -220,10 +238,15 @@ async function processReply(tenant, leadId) {
       property,
       activeProperties: property ? [] : activeProperties,
       alternatives,
+      visitSlots,
       cutoff: lastInbound.createdAt,
     };
   });
   if (!ctx) return;
+  if (ctx.blocked) {
+    await deliver(tenant, leadId, await handoffWithoutAi(tenant, leadId, ctx));
+    return;
+  }
 
   // ---- B) IA (fora de transação) ----
   const system = buildSystemPrompt({
@@ -232,13 +255,16 @@ async function processReply(tenant, leadId) {
     activeProperties: ctx.activeProperties,
     alternatives: ctx.alternatives,
     lead: ctx.lead,
-    today: new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
+    today: new Date().toLocaleDateString('pt-BR', { timeZone: tenant.timezone || 'America/Sao_Paulo', weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' }),
+    visitSlots: ctx.visitSlots,
   });
   const turn = await ai.runTurn({ system, history: ctx.history.map((m) => m.get({ plain: true })) });
 
   // ---- C) Aplica resultado (transação) ----
   const outcome = await inTx(tenant.id, async (t) => {
     const lead = await Lead.findByPk(leadId, { transaction: t, lock: t.LOCK.UPDATE });
+    // A chamada à IA já aconteceu: conta no uso mesmo se a resposta for descartada abaixo.
+    await usage.countAiTurn(tenant.id, leadId, t);
     if (!lead.botActive) return null; // humano assumiu enquanto a IA pensava
 
     let property = ctx.property;
@@ -267,15 +293,49 @@ async function processReply(tenant, leadId) {
       openQuestions,
       lastRepliedInboundAt: ctx.cutoff,
     };
+    // Dúvida nova (não só repetida): marca a data, usada pelo aviso de cadastro incompleto.
+    if (openQuestions.length > (lead.openQuestions || []).length) patch.openQuestionsAt = new Date();
+
+    // Visita: a IA só pode marcar um dos horários oferecidos nesta rodada.
+    let booking = null;
+    if (turn.visitSlot && property && ctx.visitSlots.some((s) => s.id === turn.visitSlot)) {
+      booking = await visits.bookInTx(t, { tenant, leadId, propertyId: property.id, startsAt: turn.visitSlot, createdBy: 'assistente' });
+    }
 
     let handoff = false;
-    if (turn.nextAction === 'transferir_humano' || (classification === 'quente' && visitPreference)) {
+    let extraReply = '';
+    if (booking && booking.ok) {
+      // Visita marcada: o dono é avisado, e a assistente segue respondendo dúvidas até a visita.
       handoff = true;
+      Object.assign(patch, {
+        status: 'visita_agendada',
+        visitPreference: booking.visit.label,
+        handoffAt: lead.handoffAt || new Date(),
+        handoffReason: 'visita_agendada',
+        handoffSummary: (
+          turn.handoffSummary ||
+          describeQualification({
+            name: lead.displayName,
+            property: property.get({ plain: true }),
+            qualification,
+            visitPreference: booking.visit.label,
+            classification,
+          })
+        ).slice(0, 1000),
+      });
+    } else if (
+      (booking && !booking.ok) ||
+      turn.nextAction === 'transferir_humano' ||
+      // Sem horários para oferecer, lead quente com preferência de visita vai para o corretor combinar.
+      (!ctx.visitSlots.length && lead.status !== 'visita_agendada' && classification === 'quente' && visitPreference)
+    ) {
+      handoff = true;
+      if (booking && !booking.ok) extraReply = '\n\nEsse horário acabou de ser reservado por outra pessoa. Um corretor vai falar com você para combinar outro.';
       Object.assign(patch, {
         status: 'transferido',
         botActive: false,
         handoffAt: new Date(),
-        handoffReason: (turn.handoffReason || (visitPreference ? 'visita_solicitada' : 'solicitado_pela_ia')).slice(0, 300),
+        handoffReason: (booking ? 'horario_ocupado' : turn.handoffReason || (visitPreference ? 'visita_solicitada' : 'solicitado_pela_ia')).slice(0, 300),
         // Resumo da IA quando ela transferiu; senão um resumo determinístico dos fatos.
         handoffSummary: (
           turn.handoffSummary ||
@@ -292,7 +352,7 @@ async function processReply(tenant, leadId) {
       Object.assign(patch, { status: 'descartado', botActive: false });
     }
 
-    let reply = turn.reply;
+    let reply = turn.reply + extraReply;
     if (!lead.privacyNoticeSentAt) {
       reply += privacyNotice();
       patch.privacyNoticeSentAt = new Date();
@@ -302,8 +362,12 @@ async function processReply(tenant, leadId) {
     await lead.update(patch, { transaction: t });
     return { reply, handoff, previous, waId: lead.waId, lead: lead.get({ plain: true }), property };
   });
-  if (!outcome) return;
+  await deliver(tenant, leadId, outcome);
+}
 
+/** Envia a resposta decidida e avisa o dono na transferência. */
+async function deliver(tenant, leadId, outcome) {
+  if (!outcome) return;
   try {
     await sendAndRecord(tenant, leadId, outcome.waId, outcome.reply, 'bot');
   } catch (err) {
@@ -317,9 +381,44 @@ async function processReply(tenant, leadId) {
 }
 
 /**
- * Recuperação: leads com mensagem recebida e ainda sem resposta (reinício do processo,
- * falha da IA ou do envio). Considera só mensagens das últimas 2h e mais antigas que 1 min
- * (para não competir com o debounce normal).
+ * Conta sem direito a conversa nova (teste acabou, pagamento atrasado, limite do mês): não chama a IA.
+ * O lead recebe uma mensagem fixa e vai para o corretor, com o motivo registrado.
+ */
+async function handoffWithoutAi(tenant, leadId, ctx) {
+  return inTx(tenant.id, async (t) => {
+    const lead = await Lead.findByPk(leadId, { transaction: t, lock: t.LOCK.UPDATE });
+    if (!lead.botActive) return null;
+    const property = ctx.property ? ctx.property.get({ plain: true }) : null;
+    const patch = {
+      status: 'transferido',
+      botActive: false,
+      handoffAt: new Date(),
+      handoffReason: `plano:${ctx.blocked}`.slice(0, 300),
+      handoffSummary: describeQualification({
+        name: lead.displayName,
+        property,
+        qualification: lead.qualification,
+        visitPreference: lead.visitPreference,
+        classification: lead.classification,
+      }).slice(0, 1000),
+      lastRepliedInboundAt: ctx.cutoff,
+    };
+    let reply = BLOCKED_REPLY;
+    if (!lead.privacyNoticeSentAt) {
+      reply += privacyNotice();
+      patch.privacyNoticeSentAt = new Date();
+    }
+    const previous = { lastRepliedInboundAt: lead.lastRepliedInboundAt, privacyNoticeSentAt: lead.privacyNoticeSentAt };
+    await lead.update(patch, { transaction: t });
+    logger.info({ leadId, reason: ctx.blocked }, 'Lead transferido sem IA (plano)');
+    return { reply, handoff: true, previous, waId: lead.waId, lead: lead.get({ plain: true }), property: ctx.property };
+  });
+}
+
+/**
+ * Recuperação: leads com mensagem recebida e ainda sem resposta cujo job se perdeu ou esgotou
+ * as tentativas. Considera só mensagens das últimas 2h e mais antigas que 1 min. Não mexe em
+ * resposta já pendente; se houver uma executando, a nova roda depois e vê que já foi respondido.
  */
 async function recoverUnanswered(tenant) {
   const rows = await inTx(tenant.id, (t) =>
@@ -338,7 +437,7 @@ async function recoverUnanswered(tenant) {
     )
   );
   for (const { id } of rows) {
-    if (!timers.has(id) && !running.has(id)) scheduleReply(tenant, id);
+    await jobs.enqueueReply(tenant.id, id, { delayMs: 0, mode: 'recover' });
   }
   return rows.length;
 }
@@ -351,6 +450,7 @@ async function sendHumanMessage(tenantId, leadId, text) {
   const lead = await inTx(tenantId, async (t) => {
     const l = await Lead.findByPk(leadId, { transaction: t, lock: t.LOCK.UPDATE });
     if (!l) return null;
+    if (l.anonymizedAt) return { error: 'ANONYMIZED' };
     if (l.status === 'opt_out') return { error: 'OPT_OUT' };
     if (!l.lastInboundAt || Date.now() - new Date(l.lastInboundAt).getTime() > WINDOW_MS) {
       return { error: 'WINDOW_CLOSED' };
@@ -365,6 +465,8 @@ async function sendHumanMessage(tenantId, leadId, text) {
 }
 
 module.exports = {
+  acceptInbound,
+  acceptSimulated,
   handleInbound,
   registerInbound,
   processReply,
@@ -373,5 +475,4 @@ module.exports = {
   sendAndRecord,
   OPT_OUT_RE,
   WINDOW_MS,
-  _internals: { timers, running },
 };

@@ -5,7 +5,7 @@
 const iso = (d) => (d ? new Date(d).toISOString() : null);
 
 function user(u) {
-  return { id: u.id, name: u.name, email: u.email, role: u.role };
+  return { id: u.id, name: u.name, email: u.email, role: u.role, emailVerified: Boolean(u.emailVerifiedAt) };
 }
 
 function property(p) {
@@ -58,6 +58,7 @@ function lead(l) {
     lastInboundAt: iso(l.lastInboundAt),
     lastOutboundAt: iso(l.lastOutboundAt),
     source: l.source,
+    anonymized: Boolean(l.anonymizedAt),
     createdAt: iso(l.createdAt),
     updatedAt: iso(l.updatedAt),
   };
@@ -83,4 +84,41 @@ function awaitingLead(r) {
   };
 }
 
-module.exports = { user, property, lead, message, openQuestion, awaitingLead };
+/** Conta + usuário logado + primeiros passos. Nunca o token do WhatsApp nem ids internos da Meta. */
+function account({ tenant, user: u, onboarding, whatsappSignup }) {
+  return {
+    tenant: { id: tenant.id, slug: tenant.slug, name: tenant.name, assistantName: tenant.assistantName, whatsappConnected: Boolean(tenant.waPhoneNumberId), retentionMonths: tenant.retentionMonths,
+      timezone: tenant.timezone, handoffSlaMinutes: tenant.handoffSlaMinutes, digestEnabled: tenant.digestEnabled, visitSchedule: tenant.visitSchedule },
+    user: user(u),
+    onboarding,
+    whatsappSignup: whatsappSignup || null, // app id e config públicos para o cadastro incorporado da Meta
+  };
+}
+
+/** Aviso de qualidade: só códigos e números (details), nunca texto de conversa. */
+function alert(a) {
+  return {
+    id: a.id,
+    kind: a.kind,
+    details: a.details || {},
+    createdAt: iso(a.createdAt),
+    lead: a.leadId ? { id: a.leadId, name: a.leadName, phone: a.leadPhone } : null,
+    property: a.propertyId ? { id: a.propertyId, code: a.propertyCode } : null,
+  };
+}
+
+function visit(v) {
+  return {
+    id: v.id,
+    startsAt: iso(v.startsAt),
+    endsAt: iso(v.endsAt),
+    label: v.label,
+    status: v.status,
+    createdBy: v.createdBy,
+    reminderSent: Boolean(v.reminderSentAt),
+    lead: { id: v.leadId, name: v.leadAnonymized ? null : v.leadName, phone: v.leadAnonymized ? null : v.leadPhone },
+    property: { id: v.propertyId, code: v.propertyCode, title: v.propertyTitle },
+  };
+}
+
+module.exports = { user, property, lead, message, openQuestion, awaitingLead, account, alert, visit };

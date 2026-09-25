@@ -3,6 +3,8 @@
 const env = require('../config/env');
 const logger = require('../config/logger');
 const wa = require('./whatsapp/client');
+const inTx = require('../db/inTx');
+const usage = require('./usage.service');
 
 const CLASS_LABEL = { quente: 'Quente', morno: 'Morno', frio: 'Frio', indefinido: 'Indefinido' };
 
@@ -18,12 +20,15 @@ async function notifyHandoff(tenant, lead, property) {
     return;
   }
   try {
-    await wa.sendTemplate(tenant.waPhoneNumberId, tenant.ownerWhatsapp, env.WA_OWNER_ALERT_TEMPLATE, env.WA_OWNER_ALERT_TEMPLATE_LANG, [
+    await wa.sendTemplate(tenant, tenant.ownerWhatsapp, env.WA_OWNER_ALERT_TEMPLATE, env.WA_OWNER_ALERT_TEMPLATE_LANG, [
       lead.displayName || 'Sem nome',
       property ? `#${property.code}` : 'não definido',
       CLASS_LABEL[lead.classification] || lead.classification,
       lead.visitPreference || '-',
     ]);
+    await inTx(tenant.id, (t) => usage.add(tenant.id, { templatesSent: 1 }, t)).catch((e) =>
+      logger.error({ leadId: lead.id, code: e.code }, 'Falha ao registrar uso de template')
+    );
   } catch (err) {
     // Falha no alerta não pode derrubar o atendimento.
     logger.error({ leadId: lead.id, code: err.code }, 'Falha ao alertar dono sobre lead transferido');

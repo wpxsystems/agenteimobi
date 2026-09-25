@@ -26,8 +26,17 @@
   </div>
   <nav class="abas" aria-label="Seções">
     <span class="grupo">Operação</span>
+    <button type="button" class="aba" data-view="inicio" title="Primeiros passos" id="aba-inicio" hidden>
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10.5 8 14.5 16 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Primeiros passos</span>
+    </button>
+    <button type="button" class="aba" data-view="hoje" title="Hoje">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3.5a4.5 4.5 0 0 0-4.5 4.5c0 3.2-1.5 4.5-1.5 4.5h12s-1.5-1.3-1.5-4.5A4.5 4.5 0 0 0 10 3.5zM8.5 15a1.5 1.5 0 0 0 3 0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg><span>Hoje</span><b class="contador" id="contador-avisos" hidden></b>
+    </button>
     <button type="button" class="aba" data-view="leads" aria-current="page" title="Leads">
       <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14v9H8l-4 3v-3H3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg><span>Leads</span>
+    </button>
+    <button type="button" class="aba" data-view="agenda" title="Agenda">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3 8.5h14M7 3v3M13 3v3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg><span>Agenda</span>
     </button>
     <button type="button" class="aba" data-view="imoveis" title="Imóveis">
       <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 9.5 10 4l7 5.5V17h-4.5v-4h-5v4H3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg><span>Imóveis</span>
@@ -41,6 +50,10 @@
     </button>
     <button type="button" class="aba" data-view="atendimento" title="Atendimento">
       <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 6v4l3 2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg><span>Atendimento</span>
+    </button>
+    <span class="grupo">Conta</span>
+    <button type="button" class="aba" data-view="plano" title="Conta e plano">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="5" width="14" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3 8.5h14" fill="none" stroke="currentColor" stroke-width="1.6"/></svg><span>Conta e plano</span>
     </button>
   </nav>
   <div class="rodape-menu">
@@ -58,6 +71,8 @@
 
 <div class="conteudo">
 <div class="aviso" id="aviso" hidden></div>
+<!-- Só no ambiente local: e-mails que não saíram de verdade (EMAIL_PROVIDER=log). -->
+<aside class="caixa-local" id="caixa-local" hidden aria-label="E-mails do modo local"></aside>
 
 <main id="main">
 
@@ -81,7 +96,99 @@
       <p class="erro" id="login-erro" role="alert"></p>
       <button type="submit" class="botao primario">Entrar</button>
       <button type="button" class="botao secundario" id="login-dev" hidden>Entrar como admin local, sem senha</button>
+      <p class="entrada-links">
+        <a href="#cadastro" data-ir="cadastro" id="link-cadastro">Criar uma conta</a>
+        <a href="#esqueci" data-ir="esqueci">Esqueci minha senha</a>
+      </p>
     </form>
+  </section>
+
+  <!-- Criar conta -->
+  <section class="entrada" id="view-cadastro" hidden>
+    <form class="entrada-form" id="form-cadastro" autocomplete="on">
+      <h1 class="entrada-titulo">Crie sua conta</h1>
+      <p class="entrada-texto">A assistente passa a responder no WhatsApp quem chega pelos seus anúncios, qualifica e avisa quando o lead quer visitar.</p>
+      <label class="campo">
+        <span>Nome da imobiliária</span>
+        <input name="accountName" type="text" required minlength="2" maxlength="80" autocomplete="organization">
+        <small class="dica">Se você é corretor autônomo, use o seu nome.</small>
+      </label>
+      <label class="campo">
+        <span>Endereço da conta</span>
+        <input name="slug" type="text" required pattern="[a-z0-9][a-z0-9\-]{1,38}[a-z0-9]" maxlength="40" autocapitalize="none" spellcheck="false" aria-describedby="slug-dica">
+        <small class="dica" id="slug-dica">Você usa este endereço para entrar. Letras minúsculas, números e hífen.</small>
+      </label>
+      <label class="campo">
+        <span>Seu nome</span>
+        <input name="name" type="text" required minlength="2" maxlength="80" autocomplete="name">
+      </label>
+      <label class="campo">
+        <span>E-mail</span>
+        <input name="email" type="email" required maxlength="200" autocomplete="email">
+      </label>
+      <label class="campo">
+        <span>Senha</span>
+        <input name="password" type="password" required minlength="10" maxlength="200" autocomplete="new-password">
+        <small class="dica">Pelo menos 10 caracteres.</small>
+      </label>
+      <label class="campo linha aceite">
+        <input name="acceptTerms" type="checkbox" required>
+        <span>Li e aceito os <a href="/termos" target="_blank" rel="noopener">termos de uso</a> e a <a href="/privacidade" target="_blank" rel="noopener">política de privacidade</a>.</span>
+      </label>
+      <p class="erro" role="alert"></p>
+      <button type="submit" class="botao primario">Criar conta</button>
+      <p class="entrada-links"><span>Já tem conta?</span> <a href="#entrar" data-ir="login">Entrar</a></p>
+    </form>
+  </section>
+
+  <!-- Esqueci a senha -->
+  <section class="entrada" id="view-esqueci" hidden>
+    <form class="entrada-form" id="form-esqueci" autocomplete="on">
+      <h1 class="entrada-titulo">Redefinir a senha</h1>
+      <p class="entrada-texto">Informe a conta e o e-mail. Se estiverem cadastrados, enviamos um link para criar uma senha nova.</p>
+      <label class="campo">
+        <span>Conta</span>
+        <input name="tenant" type="text" required pattern="[a-z0-9\-]{3,40}" autocapitalize="none" spellcheck="false">
+      </label>
+      <label class="campo">
+        <span>E-mail</span>
+        <input name="email" type="email" required autocomplete="username">
+      </label>
+      <p class="erro" role="alert"></p>
+      <p class="ok" role="status"></p>
+      <button type="submit" class="botao primario">Enviar link</button>
+      <p class="entrada-links"><a href="#entrar" data-ir="login">Voltar para a entrada</a></p>
+    </form>
+  </section>
+
+  <!-- Nova senha (link do e-mail) -->
+  <section class="entrada" id="view-redefinir" hidden>
+    <form class="entrada-form" id="form-redefinir">
+      <h1 class="entrada-titulo">Crie uma nova senha</h1>
+      <p class="entrada-texto">Depois de salvar, as sessões abertas em outros aparelhos são encerradas.</p>
+      <label class="campo">
+        <span>Nova senha</span>
+        <input name="password" type="password" required minlength="10" maxlength="200" autocomplete="new-password">
+        <small class="dica">Pelo menos 10 caracteres.</small>
+      </label>
+      <label class="campo">
+        <span>Repita a nova senha</span>
+        <input name="confirmar" type="password" required minlength="10" maxlength="200" autocomplete="new-password">
+      </label>
+      <p class="erro" role="alert"></p>
+      <button type="submit" class="botao primario">Salvar nova senha</button>
+      <p class="entrada-links"><a href="#entrar" data-ir="login">Voltar para a entrada</a></p>
+    </form>
+  </section>
+
+  <!-- Primeiros passos -->
+  <section class="inicio" id="view-inicio" hidden>
+    <header class="inicio-cabeca">
+      <h1>Primeiros passos</h1>
+      <p class="sutil" id="inicio-progresso"></p>
+    </header>
+    <p class="erro" role="alert"></p>
+    <ol class="passos" id="passos"></ol>
   </section>
 
   <!-- Leads -->
@@ -174,6 +281,25 @@
           </label>
           <p class="sutil" id="lead-handoff"></p>
         </div>
+        <div class="ficha-bloco" id="lead-visita">
+          <h3>Visita</h3>
+          <p class="sutil" id="lead-visita-texto"></p>
+          <div class="acoes" id="lead-visita-acoes">
+            <select id="lead-visita-horario" aria-label="Horário da visita"></select>
+            <button type="button" class="botao secundario" id="lead-visita-agendar">Agendar</button>
+          </div>
+          <p class="erro" id="lead-visita-erro" role="alert"></p>
+        </div>
+        <div class="ficha-bloco" id="lead-privacidade" hidden>
+          <h3>Pedido do titular (LGPD)</h3>
+          <p class="sutil">Use quando o próprio lead pedir uma cópia dos dados ou a exclusão.</p>
+          <div class="acoes">
+            <button type="button" class="botao secundario" id="lead-exportar">Baixar os dados</button>
+            <button type="button" class="botao secundario perigo" id="lead-excluir">Excluir os dados</button>
+          </div>
+          <p class="erro" id="lead-privacidade-erro" role="alert"></p>
+        </div>
+        <p class="sutil" id="lead-anonimizado" hidden>Os dados deste lead foram excluídos. Ficam só a classificação, a origem e as datas, para os números do funil.</p>
       </div>
     </aside>
   </section>
@@ -234,6 +360,170 @@
   </section>
 
   <!-- Dashboard: Funil -->
+  <!-- Hoje: resumo do dia e avisos de qualidade -->
+  <section class="dash" id="view-hoje" hidden>
+    <header class="inicio-cabeca">
+      <h1>Hoje</h1>
+      <p class="sutil" id="hoje-data"></p>
+    </header>
+    <p class="erro" role="alert"></p>
+    <div class="tiles" id="hoje-resumo"></div>
+    <section class="bloco">
+      <div class="bloco-cabeca">
+        <h2>Avisos</h2>
+        <p class="sutil">Somem sozinhos quando o problema se resolve.</p>
+      </div>
+      <ul class="avisos" id="hoje-avisos"></ul>
+    </section>
+  </section>
+
+  <!-- Agenda de visitas -->
+  <section class="dash" id="view-agenda" hidden>
+    <header class="inicio-cabeca">
+      <h1>Agenda</h1>
+      <p class="sutil">Visitas de hoje e dos próximos 14 dias. Os horários livres seguem a grade em Conta e plano.</p>
+    </header>
+    <p class="erro" role="alert"></p>
+    <div id="agenda-dias"></div>
+  </section>
+
+  <!-- Conta e plano: plano, uso, WhatsApp, privacidade, exclusão -->
+  <section class="dash plano" id="view-plano" hidden>
+    <header class="inicio-cabeca">
+      <h1>Conta e plano</h1>
+      <p id="plano-situacao"></p>
+    </header>
+    <p class="erro" role="alert"></p>
+    <div class="tiles" id="plano-uso"></div>
+    <section class="bloco" id="bloco-planos">
+      <div class="bloco-cabeca">
+        <h2>Planos</h2>
+        <p class="sutil">Valores mensais. Pagamento por PIX, boleto ou cartão.</p>
+      </div>
+      <div class="planos" id="planos"></div>
+      <form class="checkout" id="form-checkout" hidden>
+        <p id="checkout-plano"></p>
+        <label class="campo">
+          <span>CPF ou CNPJ de quem paga</span>
+          <input name="document" type="text" inputmode="numeric" required maxlength="20" autocomplete="off">
+          <small class="dica">Vai só para o sistema de cobrança, para emitir a cobrança. Não fica guardado aqui.</small>
+        </label>
+        <p class="erro" role="alert"></p>
+        <div class="acoes">
+          <button type="submit" class="botao primario">Ir para o pagamento</button>
+          <button type="button" class="botao secundario" id="checkout-cancelar">Cancelar</button>
+        </div>
+      </form>
+      <div class="simulacao" id="plano-simulacao" hidden>
+        <p><strong>Modo local:</strong> não há cobrança de verdade. Simule o aviso do sistema de cobrança:</p>
+        <div class="acoes">
+          <button type="button" class="botao secundario" data-simular="paid">Pagamento aprovado</button>
+          <button type="button" class="botao secundario" data-simular="overdue">Pagamento atrasado</button>
+          <button type="button" class="botao secundario" data-simular="canceled">Assinatura cancelada</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="bloco" id="bloco-rotina" hidden>
+      <h2>Rotina</h2>
+      <form class="linha-form" id="form-rotina">
+        <label class="campo">
+          <span>Fuso horário</span>
+          <select name="timezone">
+            <option value="America/Sao_Paulo">Brasília (SP, RJ, MG, Sul, Nordeste)</option>
+            <option value="America/Manaus">Manaus (AM, RO, RR)</option>
+            <option value="America/Cuiaba">Cuiabá (MT, MS)</option>
+            <option value="America/Belem">Belém (PA, AP)</option>
+            <option value="America/Fortaleza">Fortaleza (CE, RN, PB, PE, PI, MA)</option>
+            <option value="America/Rio_Branco">Rio Branco (AC)</option>
+            <option value="America/Noronha">Fernando de Noronha</option>
+          </select>
+        </label>
+        <label class="campo">
+          <span>Avisar quando um lead transferido esperar o corretor por mais de</span>
+          <select name="handoffSlaMinutes">
+            <option value="30">30 minutos</option>
+            <option value="60">1 hora</option>
+            <option value="120">2 horas</option>
+            <option value="240">4 horas</option>
+            <option value="480">8 horas</option>
+          </select>
+        </label>
+        <label class="campo linha"><input type="checkbox" name="digestEnabled"> <span>Mandar o resumo do dia no meu WhatsApp às 8h</span></label>
+        <button type="submit" class="botao secundario">Salvar</button>
+        <p class="ok" role="status"></p>
+        <p class="erro" role="alert"></p>
+      </form>
+    </section>
+
+    <section class="bloco" id="bloco-horarios" hidden>
+      <h2>Horários de visita</h2>
+      <p class="sutil">A assistente oferece ao lead só horários livres dentro destas faixas, com pelo menos 2 horas de antecedência. Use faixas como 09:00-12:00, separadas por vírgula. Dia em branco não tem visita.</p>
+      <form id="form-horarios" class="horarios-form">
+        <label class="campo">
+          <span>Duração de cada visita</span>
+          <select name="slotMinutes">
+            <option value="30">30 minutos</option>
+            <option value="45">45 minutos</option>
+            <option value="60">1 hora</option>
+            <option value="90">1 hora e meia</option>
+            <option value="120">2 horas</option>
+          </select>
+        </label>
+        <div class="dias" id="horarios-dias"></div>
+        <p class="ok" role="status"></p>
+        <p class="erro" role="alert"></p>
+        <div class="acoes"><button type="submit" class="botao secundario">Salvar horários</button></div>
+      </form>
+    </section>
+
+    <section class="bloco" id="bloco-whatsapp">
+      <h2>WhatsApp da empresa</h2>
+      <p id="whatsapp-situacao" class="sutil"></p>
+      <div class="acoes">
+        <button type="button" class="botao primario" id="whatsapp-conectar" hidden>Conectar WhatsApp</button>
+        <button type="button" class="botao secundario perigo" id="whatsapp-desconectar" hidden>Desconectar</button>
+      </div>
+      <p class="erro" id="whatsapp-erro" role="alert"></p>
+    </section>
+
+    <section class="bloco" id="bloco-privacidade" hidden>
+      <h2>Privacidade</h2>
+      <form class="linha-form" id="form-retencao">
+        <label class="campo">
+          <span>Guardar as conversas de leads sem contato por</span>
+          <select name="retentionMonths">
+            <option value="3">3 meses</option>
+            <option value="6">6 meses</option>
+            <option value="12">12 meses</option>
+            <option value="24">24 meses</option>
+          </select>
+        </label>
+        <button type="submit" class="botao secundario">Salvar</button>
+        <p class="ok" role="status"></p>
+        <p class="erro" role="alert"></p>
+      </form>
+      <p class="sutil">Depois desse prazo sem mensagens, a conversa e os dados pessoais do lead são apagados automaticamente. Ficam só a classificação, a origem e as datas, para os números do funil. Veja a <a href="/privacidade" target="_blank" rel="noopener">política de privacidade</a> e os <a href="/termos" target="_blank" rel="noopener">termos de uso</a>.</p>
+    </section>
+
+    <section class="bloco perigo-bloco" id="bloco-excluir-conta" hidden>
+      <h2>Excluir a conta</h2>
+      <p class="sutil">Apaga a conta, os usuários, os imóveis, os leads e todas as conversas. A assinatura é cancelada. Não dá para desfazer.</p>
+      <form class="checkout" id="form-excluir-conta">
+        <label class="campo">
+          <span>Digite o endereço da conta (<strong id="excluir-slug"></strong>) para confirmar</span>
+          <input name="slug" type="text" required autocapitalize="none" spellcheck="false" autocomplete="off">
+        </label>
+        <label class="campo">
+          <span>Sua senha</span>
+          <input name="password" type="password" required autocomplete="current-password">
+        </label>
+        <p class="erro" role="alert"></p>
+        <div class="acoes"><button type="submit" class="botao perigo-cheio">Excluir a conta para sempre</button></div>
+      </form>
+    </section>
+  </section>
+
   <section class="dash" id="view-funil" hidden>
     <div class="filtros-dash"></div>
     <p class="erro" role="alert"></p>

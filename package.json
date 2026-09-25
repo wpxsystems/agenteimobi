@@ -13,6 +13,8 @@
     "migrate": "node src/db/migrate.js up",
     "migrate:down": "node src/db/migrate.js down",
     "seed:dev": "node src/db/seed-dev.js",
+    "tenant:wa-token": "node src/db/set-wa-token.js",
+    "conta": "node src/db/conta-cli.js",
     "test": "jest --runInBand"
   },
   "dependencies": {

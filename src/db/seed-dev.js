@@ -47,8 +47,8 @@ async function main() {
     await q("SELECT set_config('app.tenant_id', :tid, true)", { tid: tenant.id });
 
     await q(
-      `INSERT INTO aim_user (tenant_id, name, email, password_hash, role)
-       SELECT :tid, 'Administrador', :email, :hash, 'admin'
+      `INSERT INTO aim_user (tenant_id, name, email, password_hash, role, email_verified_at)
+       SELECT :tid, 'Administrador', :email, :hash, 'admin', now()
        WHERE NOT EXISTS (SELECT 1 FROM aim_user WHERE tenant_id = :tid AND lower(email) = lower(:email))
        RETURNING id`,
       { tid: tenant.id, email: need('SEED_ADMIN_EMAIL'), hash }

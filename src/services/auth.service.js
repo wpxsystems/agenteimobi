@@ -126,4 +126,4 @@ async function devLogin() {
   });
 }
 
-module.exports = { login, refresh, logout, hashPassword, devLogin };
+module.exports = { login, refresh, logout, hashPassword, devLogin, issueTokens };

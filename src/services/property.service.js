@@ -5,6 +5,8 @@ const env = require('../config/env');
 const inTx = require('../db/inTx');
 const AppError = require('../errors/AppError');
 const { sequelize, Tenant, Property, LinkClick } = require('../models');
+const billing = require('./billing.service');
+const quality = require('./quality.service');
 
 async function list(tenantId) {
   return inTx(tenantId, (t) => Property.findAll({ order: [['createdAt', 'DESC']], transaction: t }));
@@ -18,7 +20,10 @@ async function get(tenantId, id) {
 
 async function create(tenantId, data) {
   try {
-    return await inTx(tenantId, (t) => Property.create({ ...data, tenantId }, { transaction: t }));
+    return await inTx(tenantId, async (t) => {
+      if (data.isActive !== false) await billing.assertCanActivateProperty(t); // limite de imóveis ativos do plano
+      return Property.create({ ...data, tenantId }, { transaction: t });
+    });
   } catch (err) {
     if (err instanceof UniqueConstraintError) throw AppError.conflict('Já existe imóvel com esse código');
     throw err;
@@ -30,6 +35,9 @@ async function update(tenantId, id, data) {
     return await inTx(tenantId, async (t) => {
       const p = await Property.findByPk(id, { transaction: t, lock: t.LOCK.UPDATE });
       if (!p) throw AppError.notFound('Imóvel');
+      if (data.isActive === true && !p.isActive) await billing.assertCanActivateProperty(t);
+      // Cadastro editado: o aviso de "cadastro incompleto" sai e as dúvidas voltam a contar daqui em diante.
+      await quality.resolvePropertyInTx(t, id);
       return p.update(data, { transaction: t });
     });
   } catch (err) {

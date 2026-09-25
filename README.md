@@ -53,6 +53,14 @@ npm run seed:dev
 npm run dev
 ```
 
+A API sobe junto com o worker da fila de jobs (`aim_job`): o webhook grava a mensagem e responde 200, e o worker processa a IA e o envio. Ver [`docs/logica/fila-jobs.md`](docs/logica/fila-jobs.md).
+
+Token do WhatsApp por conta, cifrado no banco com `WA_TOKEN_ENC_KEY`. Sem ele, a conta usa o `WA_ACCESS_TOKEN` global:
+
+```bash
+WA_TOKEN_NEW=<token da Meta> npm run tenant:wa-token -- <slug-da-conta> --waba <waba_id>
+```
+
 O webhook precisa de uma URL HTTPS pública. Em desenvolvimento, use um túnel (ex.: cloudflared ou ngrok) e aponte `PUBLIC_BASE_URL` para ele.
 
 ### Painel e simulador (teste visual, sem WhatsApp real)
@@ -99,6 +107,22 @@ Coloque o `trackedLink` na descrição do anúncio (ex.: "Atendimento imediato n
 | GET | `/api/v1/metrics/overview?propertyId=&from=&to=` | Funil + série diária + por imóvel + por origem + motivos de desqualificação + transferidos aguardando o corretor + tempo mediano até transferir |
 | GET/POST | `/webhooks/whatsapp` | Webhook da Meta (assinatura validada) |
 | GET | `/r/:slug/:code?src=` | Link rastreado público (conta o clique e redireciona) |
+| POST | `/api/v1/signup` | Cadastro sozinho: conta, admin, aceite dos termos, teste grátis de 14 dias |
+| POST | `/api/v1/auth/verify-email` · `/forgot-password` · `/reset-password` | Links de uso único enviados por e-mail |
+| GET | `/api/v1/account` · POST `/account/onboarding` · `/account/resend-verification` | Conta, usuário e primeiros passos |
+| GET/POST | `/api/v1/whatsapp` · `/whatsapp/connect` · `/whatsapp/disconnect` | Conectar o WhatsApp pelo cadastro incorporado da Meta (admin) |
+| GET | `/api/v1/billing` · POST `/billing/checkout` | Plano, uso do mês e pagamento pelo Asaas (admin) |
+| POST | `/webhooks/billing/asaas` | Avisos do Asaas (token no header, conferidos na API do Asaas) |
+| GET | `/api/v1/leads/:id/privacy-export` · DELETE `/leads/:id` | LGPD: cópia e exclusão dos dados do lead (admin) |
+| PATCH | `/api/v1/account/privacy` · DELETE `/account` | LGPD: prazo de retenção e exclusão da conta (admin) |
+| GET | `/privacidade` · `/privacidade/atendimento` · `/termos` | Páginas legais (rascunhos para revisão jurídica) |
+| GET | `/api/v1/today` · PATCH `/alerts/:id` | Resumo do dia e avisos de qualidade (tela "Hoje") |
+| GET/POST/PATCH | `/api/v1/visits` · `/visits/slots` · `/visits/:id` | Agenda: horários livres, agendar, remarcar, concluir, cancelar |
+| PATCH | `/api/v1/account/routine` · `/account/visit-schedule` | Fuso, prazo do corretor, resumo diário e grade de visitas (admin) |
+
+**Piloto com uma imobiliária** (sem cobrança, sem cadastro público, sem e-mail): siga [`docs/operacao/piloto.md`](docs/operacao/piloto.md). Contas são criadas e administradas por `npm run conta -- criar | listar | senha | whatsapp | plano`.
+
+Documentação da lógica de cada parte em [`docs/logica/`](docs/logica/) e inventário LGPD em [`docs/lgpd/inventario.md`](docs/lgpd/inventario.md). Preços e limites dos planos em `src/config/plans.js` (provisórios).
 
 ## Testes
 

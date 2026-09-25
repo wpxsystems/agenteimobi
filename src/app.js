@@ -19,7 +19,17 @@ app.use(
     contentSecurityPolicy: {
       useDefaults: true,
       // Em dev o painel roda em http://localhost; o upgrade para https quebraria as chamadas.
-      directives: { 'upgrade-insecure-requests': env.isDev ? null : [] },
+      directives: {
+        'upgrade-insecure-requests': env.isDev ? null : [],
+        // Cadastro incorporado da Meta (conectar o WhatsApp): só libera o SDK do Facebook quando está configurado.
+        ...(env.embeddedSignup
+          ? {
+              'script-src': ["'self'", 'https://connect.facebook.net'],
+              'frame-src': ["'self'", 'https://www.facebook.com', 'https://web.facebook.com'],
+              'connect-src': ["'self'", 'https://graph.facebook.com', 'https://www.facebook.com'],
+            }
+          : {}),
+      },
     },
   })
 );
@@ -38,7 +48,11 @@ app.get('/health', (_req, res) => res.json({ success: true, data: { status: 'ok'
 const publicDir = path.join(__dirname, '..', 'public');
 app.get('/', (_req, res) => res.redirect('/painel/'));
 app.use('/painel', express.static(path.join(publicDir, 'painel'), { index: 'index.html' }));
+// Páginas legais (rascunhos em revisão; versões em src/config/legal.js).
 app.get('/privacidade', (_req, res) => res.sendFile(path.join(publicDir, 'privacidade.html')));
+app.get('/privacidade/atendimento', (_req, res) => res.sendFile(path.join(publicDir, 'privacidade-atendimento.html')));
+app.get('/termos', (_req, res) => res.sendFile(path.join(publicDir, 'termos.html')));
+app.get('/legal.css', (_req, res) => res.sendFile(path.join(publicDir, 'legal.css')));
 
 // Webhook ANTES do express.json: precisa do corpo bruto.
 app.use('/webhooks', webhooks);

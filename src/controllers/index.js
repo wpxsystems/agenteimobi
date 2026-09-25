@@ -14,6 +14,14 @@ const leadService = require('../services/lead.service');
 const metricsService = require('../services/metrics.service');
 const exportService = require('../services/export.service');
 const conversation = require('../services/conversation.service');
+const accountService = require('../services/account.service');
+const emailService = require('../services/email.service');
+const billingService = require('../services/billing.service');
+const privacyService = require('../services/privacy.service');
+const whatsappService = require('../services/whatsappConnection.service');
+const digestService = require('../services/digest.service');
+const qualityService = require('../services/quality.service');
+const visitService = require('../services/visit.service');
 const { isValidSignature } = require('../services/whatsapp/signature');
 const { parseWebhook } = require('../services/whatsapp/webhookParser');
 
@@ -137,6 +145,157 @@ const metrics = {
   },
 };
 
+// ---------------- Conta: cadastro, links de uso único, primeiros passos ----------------
+const account = {
+  /** Público: o que o painel mostra antes do login (criar conta aberto ou fechado). */
+  publicConfig(_req, res) {
+    ok(res, { signupEnabled: env.signupEnabled, billingEnabled: env.billingEnabled });
+  },
+  async signup(req, res) {
+    // Cadastro fechado (modo piloto) responde igual para qualquer corpo.
+    if (!env.signupEnabled) throw new AppError('SIGNUP_CLOSED', 'O cadastro está fechado no momento', 403);
+    const body = schemas.signup.parse(req.body);
+    const { user, accessToken, refreshToken } = await accountService.signup(body);
+    ok(res, { user: serialize.user(user), accessToken, refreshToken }, 201);
+  },
+  async verifyEmail(req, res) {
+    const { token } = schemas.verifyEmail.parse(req.body);
+    await accountService.verifyEmail(token);
+    ok(res, { emailVerified: true });
+  },
+  /** Sempre 202: a resposta não revela se a conta ou o e-mail existem. */
+  async forgotPassword(req, res) {
+    const body = schemas.forgotPassword.parse(req.body);
+    await accountService.forgotPassword(body);
+    ok(res, null, 202);
+  },
+  async resetPassword(req, res) {
+    const body = schemas.resetPassword.parse(req.body);
+    await accountService.resetPassword(body);
+    ok(res, { passwordReset: true });
+  },
+  async get(req, res) {
+    ok(res, serialize.account(await accountService.getAccount(req.auth.tenantId, req.auth.userId)));
+  },
+  async resendVerification(req, res) {
+    const out = await accountService.resendVerification(req.auth.tenantId, req.auth.userId);
+    ok(res, out, 202);
+  },
+  async onboarding(req, res) {
+    const { step } = schemas.onboardingStep.parse(req.body);
+    await accountService.markOnboardingStep(req.auth.tenantId, step);
+    ok(res, serialize.account(await accountService.getAccount(req.auth.tenantId, req.auth.userId)));
+  },
+};
+
+// ---------------- Privacidade (LGPD): direitos do titular, retenção, exclusão da conta ----------------
+const privacy = {
+  /** Cópia dos dados de um lead em JSON (arquivo para baixar e entregar ao titular). */
+  async exportLead(req, res) {
+    const { id } = schemas.idParam.parse(req.params);
+    const data = await privacyService.exportLead(req.auth.tenantId, id, req.auth.userId);
+    res.setHeader('content-disposition', `attachment; filename="dados-do-lead-${new Date().toISOString().slice(0, 10)}.json"`);
+    res.setHeader('cache-control', 'no-store');
+    ok(res, data);
+  },
+  async anonymizeLead(req, res) {
+    const { id } = schemas.idParam.parse(req.params);
+    await privacyService.anonymizeLead(req.auth.tenantId, id, req.auth.userId);
+    ok(res, { anonymized: true });
+  },
+  async setRetention(req, res) {
+    const { retentionMonths } = schemas.retention.parse(req.body);
+    await privacyService.setRetention(req.auth.tenantId, retentionMonths);
+    ok(res, serialize.account(await accountService.getAccount(req.auth.tenantId, req.auth.userId)));
+  },
+  async deleteAccount(req, res) {
+    const body = schemas.deleteAccount.parse(req.body);
+    await privacyService.deleteAccount(req.auth.tenantId, req.auth.userId, body);
+    ok(res, { deleted: true });
+  },
+};
+
+// ---------------- Rotina do dono: hoje, avisos, visitas, configurações ----------------
+const routine = {
+  /** Tela "Hoje": números do dia e avisos abertos. */
+  async today(req, res) {
+    // Recalcula os avisos na hora: o que o corretor acabou de resolver já some da tela.
+    await qualityService.syncTenant(req.auth.tenantId);
+    const [resumo, avisos] = await Promise.all([digestService.today(req.auth.tenantId), qualityService.listOpen(req.auth.tenantId)]);
+    ok(res, { resumo, avisos: avisos.map(serialize.alert) });
+  },
+  async resolveAlert(req, res) {
+    const { id } = schemas.idParam.parse(req.params);
+    await qualityService.resolve(req.auth.tenantId, id);
+    ok(res, { resolved: true });
+  },
+  async listVisits(req, res) {
+    const q = schemas.visitList.parse(req.query);
+    const { timezone, visits } = await visitService.list(req.auth.tenantId, q);
+    ok(res, { timezone, visits: visits.map(serialize.visit) });
+  },
+  async slots(req, res) {
+    ok(res, await visitService.freeSlotsFor(req.auth.tenantId));
+  },
+  async createVisit(req, res) {
+    const body = schemas.visitCreate.parse(req.body);
+    const v = await visitService.create(req.auth.tenantId, body);
+    ok(res, { id: v.id, startsAt: new Date(v.startsAt).toISOString(), label: v.label }, 201);
+  },
+  async updateVisit(req, res) {
+    const { id } = schemas.idParam.parse(req.params);
+    const body = schemas.visitUpdate.parse(req.body);
+    ok(res, await visitService.update(req.auth.tenantId, id, body));
+  },
+  async setRoutine(req, res) {
+    const body = schemas.routine.parse(req.body);
+    await accountService.setRoutine(req.auth.tenantId, body);
+    ok(res, serialize.account(await accountService.getAccount(req.auth.tenantId, req.auth.userId)));
+  },
+  async setVisitSchedule(req, res) {
+    const body = schemas.visitSchedule.parse(req.body);
+    await visitService.setSchedule(req.auth.tenantId, body);
+    ok(res, serialize.account(await accountService.getAccount(req.auth.tenantId, req.auth.userId)));
+  },
+};
+
+// ---------------- Conexão do WhatsApp pelo painel ----------------
+const whatsapp = {
+  async status(req, res) {
+    ok(res, await whatsappService.status(req.auth.tenantId));
+  },
+  async connect(req, res) {
+    const body = schemas.whatsappConnect.parse(req.body);
+    await whatsappService.connect(req.auth.tenantId, req.auth.userId, body);
+    ok(res, serialize.account(await accountService.getAccount(req.auth.tenantId, req.auth.userId)));
+  },
+  async disconnect(req, res) {
+    await whatsappService.disconnect(req.auth.tenantId);
+    ok(res, serialize.account(await accountService.getAccount(req.auth.tenantId, req.auth.userId)));
+  },
+};
+
+// ---------------- Plano, uso e cobrança ----------------
+const billing = {
+  async overview(req, res) {
+    ok(res, await billingService.overview(req.auth.tenantId));
+  },
+  async checkout(req, res) {
+    const body = schemas.checkout.parse(req.body);
+    ok(res, await billingService.startCheckout(req.auth.tenantId, req.auth.userId, body));
+  },
+  /** Aviso do Asaas (público, autenticado pelo token do header). */
+  async asaasWebhook(req, res) {
+    const { status, result } = await billingService.handleAsaasWebhook(req.get('asaas-access-token'), req.body);
+    res.status(status).json({ success: status < 400, data: { result } });
+  },
+  /** Só fora de produção, com BILLING_PROVIDER=mock. */
+  async simulate(req, res) {
+    const { kind } = schemas.billingSimulate.parse(req.body);
+    ok(res, { result: await billingService.simulateEvent(req.auth.tenantId, kind) });
+  },
+};
+
 // ---------------- Webhook WhatsApp (público, autenticado por assinatura) ----------------
 const webhook = {
   verify(req, res) {
@@ -148,7 +307,7 @@ const webhook = {
     }
     return res.sendStatus(403);
   },
-  receive(req, res) {
+  async receive(req, res) {
     if (!isValidSignature(req.body, req.get('x-hub-signature-256'), env.WA_APP_SECRET)) {
       return res.sendStatus(401);
     }
@@ -158,20 +317,15 @@ const webhook = {
     } catch {
       return res.sendStatus(400);
     }
-    // Responde 200 na hora (a Meta reenvia se demorar) e processa em seguida.
-    res.sendStatus(200);
-
-    const messages = parseWebhook(payload);
-    (async () => {
-      for (const msg of messages) {
-        try {
-          await conversation.handleInbound(msg);
-        } catch (err) {
-          logger.error({ code: err.code, message: err.message }, 'Falha ao processar mensagem do webhook');
-        }
-      }
-    })();
-    return undefined;
+    // Grava as mensagens na fila e só então responde 200: se o banco falhar, o 500 faz a Meta reenviar.
+    // O processamento (IA, envio) roda no worker, fora da requisição.
+    try {
+      await conversation.acceptInbound(parseWebhook(payload));
+    } catch (err) {
+      logger.error({ code: err.code }, 'Falha ao enfileirar mensagens do webhook');
+      return res.sendStatus(500);
+    }
+    return res.sendStatus(200);
   },
 };
 
@@ -209,12 +363,13 @@ const dev = {
   async inbound(req, res) {
     const { phone, name, text } = schemas.devInbound.parse(req.body);
     const tenant = await Tenant.findByPk(req.auth.tenantId);
-    if (!tenant?.waPhoneNumberId) {
-      throw new AppError('WA_NOT_CONFIGURED', 'Número de WhatsApp da conta não configurado (seed)', 409);
+    // Com WA_MOCK nada sai para a Meta: conta recém-criada, ainda sem número, também pode testar.
+    if (!tenant?.waPhoneNumberId && !env.waMock) {
+      throw new AppError('WA_NOT_CONFIGURED', 'Conecte o WhatsApp da conta ou ligue WA_MOCK=true para simular', 409);
     }
-    // Mesmo formato normalizado que o webhook produz: passa pelo fluxo real de atendimento.
-    await conversation.handleInbound({
-      phoneNumberId: tenant.waPhoneNumberId,
+    // Mesmo formato normalizado que o webhook produz: passa pela fila e pelo fluxo real de atendimento.
+    await conversation.acceptSimulated(tenant.id, {
+      phoneNumberId: tenant.waPhoneNumberId || null,
       waMessageId: `sim-${crypto.randomUUID()}`,
       waId: phone,
       name: name || null,
@@ -225,6 +380,10 @@ const dev = {
     });
     ok(res, null, 202);
   },
+  /** Caixa de saída local: e-mails que não saíram (EMAIL_PROVIDER=log). Sem login: serve às telas de cadastro e senha. */
+  outbox(_req, res) {
+    ok(res, emailService.devOutbox());
+  },
 };
 
-module.exports = { auth, properties, leads, metrics, webhook, redirect, dev };
+module.exports = { auth, account, billing, privacy, whatsapp, routine, properties, leads, metrics, webhook, redirect, dev };

@@ -24,6 +24,10 @@ const state = {
   leadId: null,
   lead: null,
   simulado: null, // { phone, name } de um lead que ainda não existe no banco
+  account: null, // { tenant, user, onboarding } de GET /account
+  billing: null, // plano, uso e planos à venda (GET /billing)
+  resetToken: null, // token do link "redefinir senha", lido da URL e apagado dela
+  mensagem: '', // aviso de sucesso a mostrar na próxima tela (ex.: "E-mail confirmado")
   aguardandoBotDesde: 0,
   properties: [],
   propertyId: null,
@@ -31,7 +35,8 @@ const state = {
 };
 
 const DASHBOARDS = ['funil', 'anuncios', 'atendimento'];
-const VIEWS = ['login', 'leads', 'imoveis', ...DASHBOARDS];
+const PUBLIC_VIEWS = ['login', 'cadastro', 'esqueci', 'redefinir'];
+const VIEWS = [...PUBLIC_VIEWS, 'inicio', 'hoje', 'leads', 'agenda', 'imoveis', ...DASHBOARDS, 'plano'];
 
 // ---------------------------------------------------------------------------
 // Utilidades
@@ -185,8 +190,11 @@ $('topo').addEventListener('click', (e) => {
 // ---------------------------------------------------------------------------
 function mostrarView(nome) {
   state.view = nome;
-  const logado = nome !== 'login';
+  const logado = !PUBLIC_VIEWS.includes(nome);
   $('topo').hidden = !logado;
+  if (!logado) $('aviso').hidden = !state.mensagem;
+  if (!logado && state.mensagem) { $('aviso').textContent = state.mensagem; state.mensagem = ''; }
+  renderCaixaLocal(!logado || nome === 'inicio');
   for (const v of VIEWS) $(`view-${v}`).hidden = v !== nome;
   document.querySelectorAll('.aba[data-view]').forEach((b) => b.setAttribute('aria-current', b.dataset.view === nome ? 'page' : 'false'));
   Object.values(state.timers).forEach(clearInterval);
@@ -196,6 +204,15 @@ function mostrarView(nome) {
     carregarLeads();
     state.timers.leads = setInterval(carregarLeads, 4000);
     if (state.leadId) state.timers.lead = setInterval(carregarLead, 2000);
+  } else if (nome === 'inicio') {
+    carregarInicio();
+  } else if (nome === 'plano') {
+    carregarPlano();
+  } else if (nome === 'hoje') {
+    carregarHoje();
+    state.timers.hoje = setInterval(carregarHoje, 60000);
+  } else if (nome === 'agenda') {
+    carregarAgenda();
   } else if (nome === 'imoveis') {
     carregarImoveis();
   } else if (DASHBOARDS.includes(nome)) {
@@ -259,6 +276,805 @@ $('form-login').addEventListener('submit', async (ev) => {
   }
 });
 
+// Links entre as telas públicas (entrar, criar conta, esqueci a senha).
+document.querySelectorAll('[data-ir]').forEach((a) =>
+  a.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    document.querySelectorAll('.entrada-form .erro, .entrada-form .ok').forEach((p) => { p.textContent = ''; });
+    mostrarView(a.dataset.ir);
+  })
+);
+
+/** Enviar formulário com botão travado e erro no próprio formulário. */
+async function enviarForm(form, fn) {
+  const botao = form.querySelector('button[type=submit]');
+  const erro = form.querySelector('.erro');
+  erro.textContent = '';
+  botao.disabled = true;
+  try {
+    await fn(new FormData(form));
+  } catch (err) {
+    erro.textContent = err.message;
+  } finally {
+    botao.disabled = false;
+  }
+}
+
+// ---- Criar conta ----
+/** "Imobiliária São João" -> "imobiliaria-sao-joao" */
+function sugerirEndereco(nome) {
+  return nome.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/g, '');
+}
+const formCadastro = $('form-cadastro');
+let enderecoEditado = false;
+formCadastro.accountName.addEventListener('input', () => {
+  if (!enderecoEditado) formCadastro.slug.value = sugerirEndereco(formCadastro.accountName.value);
+});
+formCadastro.slug.addEventListener('input', () => {
+  enderecoEditado = formCadastro.slug.value !== '';
+  formCadastro.slug.value = formCadastro.slug.value.toLowerCase().replace(/[^a-z0-9-]/g, '');
+});
+formCadastro.addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  enviarForm(formCadastro, async (f) => {
+    const data = await api('/signup', {
+      method: 'POST',
+      tentarRefresh: false,
+      body: {
+        accountName: f.get('accountName').trim(),
+        slug: f.get('slug').trim(),
+        name: f.get('name').trim(),
+        email: f.get('email').trim(),
+        password: f.get('password'),
+        acceptTerms: f.get('acceptTerms') === 'on',
+      },
+    });
+    salvarSessao(data);
+    cofre.del('aim.semAuto');
+    cofre.del('aim.devLogin'); // entrou numa conta própria: não voltar sozinho para o admin do seed
+    formCadastro.reset();
+    enderecoEditado = false;
+    await iniciar();
+  });
+});
+
+// ---- Esqueci a senha ----
+const formEsqueci = $('form-esqueci');
+formEsqueci.addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  enviarForm(formEsqueci, async (f) => {
+    formEsqueci.querySelector('.ok').textContent = '';
+    await api('/auth/forgot-password', { method: 'POST', tentarRefresh: false, body: { tenant: f.get('tenant').trim().toLowerCase(), email: f.get('email').trim() } });
+    formEsqueci.querySelector('.ok').textContent = 'Se a conta e o e-mail estiverem cadastrados, o link chega em alguns minutos. Confira também o spam.';
+    renderCaixaLocal(true);
+  });
+});
+
+// ---- Nova senha (link do e-mail) ----
+const formRedefinir = $('form-redefinir');
+formRedefinir.addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  enviarForm(formRedefinir, async (f) => {
+    if (f.get('password') !== f.get('confirmar')) throw new Error('As duas senhas não são iguais.');
+    if (!state.resetToken) throw new Error('Link inválido. Peça um novo em "Esqueci minha senha".');
+    await api('/auth/reset-password', { method: 'POST', tentarRefresh: false, body: { token: state.resetToken, password: f.get('password') } });
+    state.resetToken = null;
+    formRedefinir.reset();
+    limparSessao(); // a troca encerra todas as sessões, inclusive esta
+    state.mensagem = 'Senha alterada. Entre com a nova senha.';
+    mostrarView('login');
+  });
+});
+
+/** Lê e apaga da URL os links que chegam por e-mail (?verificar=... e ?redefinir=...). */
+async function tratarLinkDoEmail() {
+  const params = new URLSearchParams(location.search);
+  const verificar = params.get('verificar');
+  const redefinir = params.get('redefinir');
+  if (!verificar && !redefinir) return null;
+  history.replaceState(null, '', location.pathname); // o token não fica no histórico nem vaza em links
+  if (redefinir) {
+    state.resetToken = redefinir;
+    return 'redefinir';
+  }
+  try {
+    await api('/auth/verify-email', { method: 'POST', tentarRefresh: false, body: { token: verificar } });
+    state.mensagem = 'E-mail confirmado.';
+  } catch (err) {
+    state.mensagem = err.message;
+  }
+  return 'verificado';
+}
+
+// ---- Caixa de saída local (só existe no ambiente local com EMAIL_PROVIDER=log) ----
+async function renderCaixaLocal(mostrar) {
+  const caixa = $('caixa-local');
+  if (!mostrar) { caixa.hidden = true; return; }
+  let emails = [];
+  try {
+    const r = await fetch(`${API}/dev/outbox`);
+    if (!r.ok) { caixa.hidden = true; return; } // produção: a rota não existe
+    emails = (await r.json()).data || [];
+  } catch {
+    caixa.hidden = true;
+    return;
+  }
+  caixa.hidden = false;
+  caixa.innerHTML = `<p><strong>Modo local:</strong> os e-mails não saem de verdade. Os últimos aparecem aqui.</p>${
+    emails.length
+      ? `<ul>${emails.slice(0, 3).map((m, i) => `<li><span>${esc(m.subject)} · ${esc(m.to)} · ${esc(hora(m.sentAt))}</span>${m.link ? ` <button type="button" class="botao-link" data-email="${i}">Abrir o link</button>` : ''}</li>`).join('')}</ul>`
+      : '<p class="sutil">Nenhum e-mail ainda.</p>'
+  }`;
+  caixa.querySelectorAll('[data-email]').forEach((b) =>
+    b.addEventListener('click', () => { location.href = emails[Number(b.dataset.email)].link; })
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Primeiros passos
+// ---------------------------------------------------------------------------
+async function carregarConta() {
+  state.account = await api('/account');
+  $('conta-nome').textContent = state.account.tenant.name;
+  $('aba-inicio').hidden = state.account.onboarding.completed;
+  return state.account;
+}
+
+function passosDef() {
+  const simulado = Boolean(state.dev?.waMock);
+  const a = state.account;
+  return {
+    conta: { titulo: 'Conta criada', texto: `${a.tenant.name}. Para entrar, use o endereço ${a.tenant.slug}.` },
+    email: {
+      titulo: 'Confirme seu e-mail',
+      curto: 'o e-mail confirmado',
+      texto: `Enviamos um link para ${a.user.email}. Ele vale por 48 horas.`,
+      acao: { rotulo: 'Reenviar e-mail', fn: reenviarConfirmacao },
+    },
+    imovel: {
+      titulo: 'Cadastre o primeiro imóvel',
+      curto: 'um imóvel cadastrado',
+      texto: 'Preço, regras (pet, moradores, garantias) e as informações extras que a assistente usa para responder.',
+      acao: { rotulo: 'Cadastrar imóvel', fn: () => { mostrarView('imoveis'); abrirImovel(null); } },
+    },
+    whatsapp: {
+      titulo: 'Conecte o WhatsApp da empresa',
+      curto: 'o WhatsApp conectado',
+      texto: a.whatsappSignup
+        ? 'Você entra com o Facebook da empresa, escolhe o número e autoriza o Imobi. Leva poucos minutos.'
+        : simulado
+          ? 'Modo local: o WhatsApp está simulado, então dá para testar a conversa sem conectar.'
+          : 'A conexão pelo próprio painel ainda não está disponível. Fale com o suporte para conectar o número.',
+      acao: a.whatsappSignup && a.user.role === 'admin' ? { rotulo: 'Conectar WhatsApp', fn: conectarWhatsappPasso, requer: ['email'] } : null,
+    },
+    link: {
+      titulo: 'Copie o link do anúncio',
+      texto: 'Cole na descrição do anúncio. Cada clique é contado e abre o WhatsApp já com o código do imóvel.',
+      acao: { rotulo: 'Copiar link', fn: copiarLinkAnuncio, requer: ['imovel', 'whatsapp'] },
+    },
+    teste: {
+      titulo: 'Teste a conversa',
+      texto: state.dev
+        ? 'Use o simulador para conversar como se fosse um cliente chegando pelo anúncio.'
+        : 'Abra o link do anúncio no seu celular e mande uma mensagem. A conversa aparece em Leads.',
+      acao: state.dev ? { rotulo: 'Simular um lead', fn: () => { mostrarView('leads'); $('novo-simulado').click(); } } : null,
+    },
+  };
+}
+
+async function carregarInicio() {
+  const view = $('view-inicio');
+  view.querySelector('.erro').textContent = '';
+  try {
+    await carregarConta();
+    renderInicio();
+  } catch (err) {
+    view.querySelector('.erro').textContent = err.message;
+  }
+}
+
+function renderInicio(mensagens = {}) {
+  const { steps } = state.account.onboarding;
+  const def = passosDef();
+  const feito = Object.fromEntries(steps.map((s) => [s.key, s.done]));
+  const total = steps.filter((s) => s.done).length;
+  $('inicio-progresso').textContent = total === steps.length
+    ? 'Tudo pronto. A assistente já pode atender os leads dos seus anúncios.'
+    : `${total} de ${steps.length} passos concluídos.`;
+  $('passos').innerHTML = steps.map((s, i) => {
+    const d = def[s.key];
+    const pendencias = (d.acao?.requer || []).filter((k) => !feito[k]);
+    const bloqueado = pendencias.length > 0;
+    const botao = !s.done && d.acao
+      ? `<button type="button" class="botao ${i === steps.findIndex((x) => !x.done) ? 'primario' : 'secundario'}" data-passo="${s.key}" ${bloqueado ? 'disabled' : ''}>${esc(d.acao.rotulo)}</button>`
+      : '';
+    const dependencia = !s.done && bloqueado ? `<p class="sutil">Depende de: ${pendencias.map((k) => esc(def[k].curto)).join(' e ')}.</p>` : '';
+    return `<li class="passo${s.done ? ' feito' : ''}">
+      <span class="passo-marca" aria-hidden="true">${s.done ? '✓' : i + 1}</span>
+      <div class="passo-corpo">
+        <h2>${esc(d.titulo)}<span class="visualmente-oculto">${s.done ? ' (concluído)' : ' (pendente)'}</span></h2>
+        <p>${esc(d.texto)}</p>
+        ${dependencia}
+        ${mensagens[s.key] ? `<p class="ok" role="status">${esc(mensagens[s.key])}</p>` : ''}
+      </div>
+      ${botao}
+    </li>`;
+  }).join('');
+  $('passos').querySelectorAll('[data-passo]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      b.disabled = true;
+      $('view-inicio').querySelector('.erro').textContent = '';
+      try {
+        await def[b.dataset.passo].acao.fn();
+      } catch (err) {
+        $('view-inicio').querySelector('.erro').textContent = err.message;
+        b.disabled = false;
+      }
+    })
+  );
+}
+
+// ---- Conectar o WhatsApp (cadastro incorporado da Meta) ----
+let sdkFacebook = null;
+/** Carrega o SDK do Facebook uma vez. Só é chamado quando o servidor informa app e configuração. */
+function carregarSdkFacebook({ appId, graphVersion }) {
+  if (!sdkFacebook) {
+    sdkFacebook = new Promise((resolve, reject) => {
+      window.fbAsyncInit = () => {
+        window.FB.init({ appId, autoLogAppEvents: false, xfbml: false, version: graphVersion });
+        resolve();
+      };
+      const s = document.createElement('script');
+      s.src = 'https://connect.facebook.net/pt_BR/sdk.js';
+      s.async = true;
+      s.crossOrigin = 'anonymous';
+      s.onerror = () => { sdkFacebook = null; reject(new Error('Não foi possível abrir o login do Facebook. Confira a internet ou o bloqueador de anúncios.')); };
+      document.head.appendChild(s);
+    });
+  }
+  return sdkFacebook;
+}
+
+/**
+ * Abre o cadastro da Meta. A janela da Meta avisa o número e a WABA escolhidos por mensagem
+ * (WA_EMBEDDED_SIGNUP) e o login devolve um código; os três vão para o servidor concluir a conexão.
+ */
+async function conectarWhatsapp() {
+  const cfg = state.account?.whatsappSignup;
+  if (!cfg) throw new Error('Conexão pelo painel indisponível.');
+  await carregarSdkFacebook(cfg);
+  let sessao = null;
+  const ouvir = (ev) => {
+    let host = '';
+    try { host = new URL(ev.origin).hostname; } catch { return; }
+    if (!/(^|\.)facebook\.com$/.test(host)) return;
+    try {
+      const d = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data;
+      if (d?.type !== 'WA_EMBEDDED_SIGNUP') return;
+      if (d.event === 'CANCEL') sessao = { cancelado: true };
+      else if (d.data?.phone_number_id && d.data?.waba_id) sessao = { phoneNumberId: String(d.data.phone_number_id), wabaId: String(d.data.waba_id) };
+    } catch { /* mensagem de outro tipo */ }
+  };
+  window.addEventListener('message', ouvir);
+  try {
+    const code = await new Promise((resolve) => {
+      window.FB.login((r) => resolve(r?.authResponse?.code || null), {
+        config_id: cfg.configId,
+        response_type: 'code',
+        override_default_response_type: true,
+        extras: { setup: {}, featureType: '', sessionInfoVersion: '3' },
+      });
+    });
+    // A mensagem com o número pode chegar logo depois do login.
+    for (let i = 0; i < 20 && !sessao; i += 1) await new Promise((r) => setTimeout(r, 100));
+    if (!code || !sessao || sessao.cancelado) throw new Error('A conexão foi cancelada antes de terminar. Tente de novo.');
+    state.account = await api('/whatsapp/connect', { method: 'POST', body: { code, wabaId: sessao.wabaId, phoneNumberId: sessao.phoneNumberId } });
+  } finally {
+    window.removeEventListener('message', ouvir);
+  }
+}
+
+async function conectarWhatsappPasso() {
+  await conectarWhatsapp();
+  $('aba-inicio').hidden = state.account.onboarding.completed;
+  renderInicio({ whatsapp: 'WhatsApp conectado. A assistente já pode atender por esse número.' });
+  await atualizarAvisos();
+}
+
+async function reenviarConfirmacao() {
+  const r = await api('/account/resend-verification', { method: 'POST' });
+  await carregarConta();
+  renderInicio({ email: r.alreadyVerified ? 'Seu e-mail já está confirmado.' : 'Enviamos um novo link. Confira também o spam.' });
+  renderCaixaLocal(true);
+}
+
+async function copiarLinkAnuncio() {
+  const imoveis = (await api('/properties')).filter((p) => p.isActive);
+  if (!imoveis.length) throw new Error('Cadastre um imóvel ativo primeiro.');
+  const { trackedLink } = await api(`/properties/${imoveis[0].id}/links?src=marketplace`);
+  let copiado = true;
+  try { await navigator.clipboard.writeText(trackedLink); } catch { copiado = false; }
+  state.account = await api('/account/onboarding', { method: 'POST', body: { step: 'link' } });
+  $('aba-inicio').hidden = state.account.onboarding.completed;
+  renderInicio({ link: `${copiado ? 'Copiado' : 'Copie este link'}: ${trackedLink}. Cada imóvel tem o seu, na tela Imóveis.` });
+}
+
+// ---------------------------------------------------------------------------
+// Hoje: resumo do dia e avisos
+// ---------------------------------------------------------------------------
+const minutosTexto = (m) => {
+  if (m === null || m === undefined) return '';
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  return h < 24 ? `${h} h${m % 60 ? ` ${m % 60} min` : ''}` : `${Math.floor(h / 24)} d`;
+};
+const AVISO = {
+  lead_sem_retorno: (a) => ({ titulo: 'Lead esperando o corretor', texto: `Transferido há ${minutosTexto(a.details.minutos)} e ainda sem resposta de ninguém.${a.details.classificacao === 'quente' ? ' É um lead quente.' : ''}` }),
+  sem_resposta: (a) => ({ titulo: 'Mensagem sem resposta', texto: `O lead escreveu há ${minutosTexto(a.details.minutos)} e a assistente ainda não respondeu. Confira a conversa.` }),
+  falha_envio: () => ({ titulo: 'Resposta não chegou ao lead', texto: 'O WhatsApp recusou o envio várias vezes. Confira a conexão do número em Conta e plano.' }),
+  ia_invalida: () => ({ titulo: 'A assistente não conseguiu responder', texto: 'A resposta saiu fora do formato várias vezes. Responda você pela conversa.' }),
+  falha_resposta: () => ({ titulo: 'A assistente não conseguiu responder', texto: 'A resposta falhou várias vezes. Responda você pela conversa.' }),
+  cadastro_incompleto: (a) => ({
+    titulo: `Complete o cadastro do imóvel ${a.details.codigo || ''}`.trim(),
+    texto: `${a.details.leads} leads perguntaram coisas que o cadastro não responde${(a.details.perguntas || []).length ? `: ${a.details.perguntas.map((p) => `“${p}”`).join(', ')}` : ''}. Acrescente em Informações extras.`,
+  }),
+};
+
+const quentes = (n) => (n === 1 ? '1 quente' : `${n} quentes`);
+
+function atualizarContador(n) {
+  $('contador-avisos').hidden = !n;
+  $('contador-avisos').textContent = n > 99 ? '99+' : String(n || '');
+  $('contador-avisos').setAttribute('aria-label', `${n} avisos`);
+}
+
+async function carregarHoje() {
+  const view = $('view-hoje');
+  view.querySelector('.erro').textContent = '';
+  try {
+    const { resumo: r, avisos } = await api('/today');
+    $('hoje-data').textContent = new Date(`${r.day}T12:00:00`).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
+    $('hoje-resumo').innerHTML = [
+      { rotulo: 'Esperando o corretor', valor: String(r.aguardando), sub: r.aguardando ? `${quentes(r.quentesAguardando)} · a mais antiga há ${minutosTexto(r.esperaMaisLongaMin)}` : 'Ninguém esperando', alerta: r.quentesAguardando > 0 },
+      { rotulo: 'Visitas hoje', valor: String(r.visitasHoje), sub: 'Veja a Agenda' },
+      { rotulo: 'Leads novos ontem', valor: String(r.novosOntem), sub: quentes(r.quentesOntem) },
+      { rotulo: 'Avisos', valor: String(r.avisos), sub: r.avisos ? 'Abaixo' : 'Tudo em ordem', alerta: r.avisos > 0 },
+    ].map(tile).join('');
+    atualizarContador(avisos.length);
+    $('hoje-avisos').innerHTML = avisos.length
+      ? avisos.map((a) => {
+          const d = (AVISO[a.kind] || (() => ({ titulo: a.kind, texto: '' })))(a);
+          const quem = a.lead ? esc(a.lead.name || telefone(a.lead.phone)) : '';
+          const onde = a.property ? ` · ${esc(a.property.code)}` : '';
+          return `<li class="aviso-item" data-kind="${esc(a.kind)}">
+            <div><strong>${esc(d.titulo)}</strong>${quem || onde ? `<span class="sutil"> ${quem}${onde}</span>` : ''}<p>${esc(d.texto)}</p></div>
+            <div class="acoes">
+              ${a.lead ? `<button type="button" class="botao secundario" data-abrir-lead="${esc(a.lead.id)}">Abrir conversa</button>` : ''}
+              ${!a.lead && a.property ? `<button type="button" class="botao secundario" data-abrir-imovel="${esc(a.property.id)}">Abrir imóvel</button>` : ''}
+              <button type="button" class="botao-texto-escuro" data-resolver="${esc(a.id)}">Resolvido</button>
+            </div>
+          </li>`;
+        }).join('')
+      : '<li class="sutil">Nenhum aviso. A assistente está dando conta.</li>';
+    $('hoje-avisos').querySelectorAll('[data-abrir-lead]').forEach((b) => b.addEventListener('click', () => { state.leadId = b.dataset.abrirLead; mostrarView('leads'); selecionarLead(b.dataset.abrirLead); }));
+    $('hoje-avisos').querySelectorAll('[data-abrir-imovel]').forEach((b) => b.addEventListener('click', () => { mostrarView('imoveis'); abrirImovel(b.dataset.abrirImovel); }));
+    $('hoje-avisos').querySelectorAll('[data-resolver]').forEach((b) => b.addEventListener('click', async () => {
+      b.disabled = true;
+      try { await api(`/alerts/${b.dataset.resolver}`, { method: 'PATCH', body: {} }); await carregarHoje(); }
+      catch (err) { view.querySelector('.erro').textContent = err.message; b.disabled = false; }
+    }));
+  } catch (err) {
+    view.querySelector('.erro').textContent = err.message;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Agenda de visitas
+// ---------------------------------------------------------------------------
+const SITUACAO_VISITA = { agendada: 'Agendada', realizada: 'Realizada', nao_compareceu: 'Não compareceu', cancelada: 'Cancelada' };
+let horariosLivres = null; // cache curto dos horários livres (remarcar)
+
+async function buscarHorariosLivres() {
+  horariosLivres = (await api('/visits/slots')).slots;
+  return horariosLivres;
+}
+const opcoesHorario = (slots) => slots.map((s) => `<option value="${esc(s.startsAt)}">${esc(s.label)}</option>`).join('');
+
+async function carregarAgenda() {
+  const view = $('view-agenda');
+  view.querySelector('.erro').textContent = '';
+  try {
+    const { visits, timezone } = await api('/visits');
+    const porDia = new Map();
+    for (const v of visits) {
+      const d = new Date(v.startsAt).toLocaleDateString('pt-BR', { timeZone: timezone, weekday: 'long', day: '2-digit', month: 'long' });
+      const dia = d.charAt(0).toUpperCase() + d.slice(1);
+      if (!porDia.has(dia)) porDia.set(dia, []);
+      porDia.get(dia).push(v);
+    }
+    const hora = (iso) => new Date(iso).toLocaleTimeString('pt-BR', { timeZone: timezone, hour: '2-digit', minute: '2-digit' });
+    $('agenda-dias').innerHTML = visits.length
+      ? [...porDia.entries()].map(([dia, lista]) => `
+        <section class="bloco agenda-dia">
+          <h2>${esc(dia)}</h2>
+          <ul class="visitas">${lista.map((v) => `
+            <li class="visita" data-status="${esc(v.status)}">
+              <span class="visita-hora">${esc(hora(v.startsAt))}</span>
+              <div class="visita-corpo">
+                <strong>${esc(v.lead.name || (v.lead.phone ? telefone(v.lead.phone) : 'Lead excluído'))}</strong>
+                <span class="sutil">${esc(v.property.code)} · ${esc(v.property.title)} · ${esc(SITUACAO_VISITA[v.status])}${v.createdBy === 'assistente' ? ' · marcada pela assistente' : ''}${v.reminderSent ? ' · lembrete enviado' : ''}</span>
+              </div>
+              ${v.status === 'agendada' ? `<div class="acoes">
+                <button type="button" class="botao secundario" data-visita="${esc(v.id)}" data-acao="realizada">Realizada</button>
+                <button type="button" class="botao secundario" data-visita="${esc(v.id)}" data-acao="nao_compareceu">Não veio</button>
+                <button type="button" class="botao secundario" data-visita="${esc(v.id)}" data-acao="remarcar">Remarcar</button>
+                <button type="button" class="botao secundario perigo" data-visita="${esc(v.id)}" data-acao="cancelada">Cancelar</button>
+              </div>` : ''}
+            </li>`).join('')}</ul>
+        </section>`).join('')
+      : '<p class="sutil">Nenhuma visita marcada. Quando o lead escolher um horário com a assistente, ou você agendar pela ficha do lead, ela aparece aqui.</p>';
+    $('agenda-dias').querySelectorAll('[data-visita]').forEach((b) => b.addEventListener('click', () => acaoVisita(b)));
+  } catch (err) {
+    view.querySelector('.erro').textContent = err.message;
+  }
+}
+
+async function acaoVisita(b) {
+  const erro = $('view-agenda').querySelector('.erro');
+  erro.textContent = '';
+  const id = b.dataset.visita;
+  try {
+    if (b.dataset.acao === 'remarcar') {
+      const li = b.closest('.visita');
+      if (li.querySelector('.remarcar')) return;
+      const slots = await buscarHorariosLivres();
+      const form = document.createElement('div');
+      form.className = 'acoes remarcar';
+      form.innerHTML = `<select aria-label="Novo horário">${opcoesHorario(slots)}</select><button type="button" class="botao primario">Confirmar</button>`;
+      li.appendChild(form);
+      form.querySelector('button').addEventListener('click', async () => {
+        try { await api(`/visits/${id}`, { method: 'PATCH', body: { startsAt: form.querySelector('select').value } }); await carregarAgenda(); }
+        catch (err) { erro.textContent = err.message; }
+      });
+      return;
+    }
+    if (b.dataset.acao === 'cancelada' && !confirm('Cancelar esta visita? O lead volta para o corretor combinar outro horário.')) return;
+    b.disabled = true;
+    await api(`/visits/${id}`, { method: 'PATCH', body: { status: b.dataset.acao } });
+    await carregarAgenda();
+  } catch (err) {
+    erro.textContent = err.message;
+    b.disabled = false;
+  }
+}
+
+// Ficha do lead: agendar visita pelo painel.
+async function renderVisitaLead(l) {
+  const bloco = $('lead-visita');
+  const podeAgendar = !l.anonymized && l.status !== 'opt_out' && l.property;
+  bloco.hidden = !podeAgendar && !l.visitPreference;
+  $('lead-visita-erro').textContent = '';
+  $('lead-visita-texto').textContent = l.status === 'visita_agendada' && l.visitPreference
+    ? `Marcada: ${l.visitPreference}. Para mudar, use a Agenda.`
+    : l.visitPreference ? `Preferência do lead: ${l.visitPreference}.` : 'Ainda sem visita.';
+  $('lead-visita-acoes').hidden = !podeAgendar || l.status === 'visita_agendada';
+  if (!$('lead-visita-acoes').hidden && $('lead-visita-horario').dataset.lead !== l.id) {
+    $('lead-visita-horario').dataset.lead = l.id;
+    try {
+      const slots = horariosLivres || (await buscarHorariosLivres());
+      $('lead-visita-horario').innerHTML = slots.length ? opcoesHorario(slots) : '<option value="">Sem horários livres na grade</option>';
+    } catch { /* sem horários */ }
+  }
+}
+$('lead-visita-agendar').addEventListener('click', async (ev) => {
+  if (!state.lead || !$('lead-visita-horario').value) return;
+  ev.target.disabled = true;
+  $('lead-visita-erro').textContent = '';
+  try {
+    await api('/visits', { method: 'POST', body: { leadId: state.lead.id, startsAt: $('lead-visita-horario').value } });
+    horariosLivres = null;
+    $('lead-visita-horario').dataset.lead = '';
+    await carregarLead();
+    await carregarLeads();
+  } catch (err) {
+    $('lead-visita-erro').textContent = err.message;
+  } finally {
+    ev.target.disabled = false;
+  }
+});
+
+/** '9h-12h', '9-12', '09:00 - 12:30' -> '09:00-12:30'. Texto não reconhecido segue igual (o servidor recusa explicando). */
+function normalizarFaixa(x) {
+  const t = String(x).trim().replace(/\s+/g, '').toLowerCase();
+  if (!t) return '';
+  const m = /^(\d{1,2})(?:[:h](\d{2}))?h?(?:-|a|até)(\d{1,2})(?:[:h](\d{2}))?h?$/.exec(t);
+  if (!m) return t;
+  const hh = (h, mi) => `${String(h).padStart(2, '0')}:${mi || '00'}`;
+  return `${hh(m[1], m[2])}-${hh(m[3], m[4])}`;
+}
+
+// Conta: rotina e grade de horários (admin).
+const NOMES_DIA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+function renderRotina() {
+  const t = state.account?.tenant;
+  const admin = state.user?.role === 'admin';
+  $('bloco-rotina').hidden = !admin || !t;
+  $('bloco-horarios').hidden = !admin || !t;
+  if (!admin || !t) return;
+  const fr = $('form-rotina');
+  fr.timezone.value = t.timezone || 'America/Sao_Paulo';
+  fr.handoffSlaMinutes.value = String(t.handoffSlaMinutes || 120);
+  fr.digestEnabled.checked = t.digestEnabled !== false;
+  const g = t.visitSchedule || { slotMinutes: 60, days: {} };
+  $('form-horarios').slotMinutes.value = String(g.slotMinutes || 60);
+  const ordem = [1, 2, 3, 4, 5, 6, 0];
+  $('horarios-dias').innerHTML = ordem.map((d) => `
+    <label class="campo dia"><span>${NOMES_DIA[d]}</span>
+      <input name="dia-${d}" type="text" inputmode="numeric" placeholder="sem visitas" value="${esc((g.days?.[d] || g.days?.[String(d)] || []).join(', '))}">
+    </label>`).join('');
+}
+$('form-rotina').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const form = ev.target;
+  form.querySelector('.ok').textContent = '';
+  enviarForm(form, async (f) => {
+    state.account = await api('/account/routine', { method: 'PATCH', body: { timezone: f.get('timezone'), handoffSlaMinutes: Number(f.get('handoffSlaMinutes')), digestEnabled: form.digestEnabled.checked } });
+    form.querySelector('.ok').textContent = 'Rotina salva.';
+  });
+});
+$('form-horarios').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const form = ev.target;
+  form.querySelector('.ok').textContent = '';
+  enviarForm(form, async (f) => {
+    const days = {};
+    for (let d = 0; d <= 6; d += 1) {
+      const faixas = String(f.get(`dia-${d}`) || '').split(/[,;]/).map(normalizarFaixa).filter(Boolean);
+      if (faixas.length) days[d] = faixas;
+    }
+    state.account = await api('/account/visit-schedule', { method: 'PATCH', body: { slotMinutes: Number(f.get('slotMinutes')), days } });
+    horariosLivres = null;
+    renderRotina();
+    form.querySelector('.ok').textContent = 'Horários salvos.';
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plano e uso
+// ---------------------------------------------------------------------------
+const dataCurta = (iso) => (iso ? new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '');
+const MOTIVO_PLANO = {
+  teste_expirado: 'O teste grátis terminou.',
+  pagamento_atrasado: 'O pagamento está atrasado.',
+  assinatura_cancelada: 'A assinatura foi cancelada.',
+  plano_desconhecido: 'Há um problema com o plano da conta.',
+  situacao_desconhecida: 'Há um problema com a assinatura da conta.',
+};
+const diasTexto = (n) => (n === 1 ? '1 dia' : `${n} dias`);
+
+/** Uma frase sobre a situação do plano, a mesma no aviso do topo e na tela Plano e uso. */
+function situacaoPlano(b) {
+  const s = b.subscription;
+  if (!b.billing.enabled) return { texto: 'Período de piloto: sem limite de uso e sem cobrança. Os números abaixo ajudam a medir o custo real do atendimento.', alerta: false };
+  if (!s.active) return { texto: `${MOTIVO_PLANO[s.reason] || 'A assinatura não está ativa.'} Leads novos vão direto para o corretor, sem a assistente. Escolha um plano para voltar a atender.`, alerta: true };
+  if (s.status === 'teste') return { texto: `Teste grátis: ${s.daysLeft === 0 ? 'termina hoje' : `faltam ${diasTexto(s.daysLeft)}`} (até ${dataCurta(s.trialEndsAt)}).`, alerta: s.warning === 'teste_acabando' };
+  if (s.status === 'inadimplente') return { texto: `Pagamento atrasado. A assistente continua atendendo até ${dataCurta(s.graceUntil)}. Depois disso, leads novos vão direto para o corretor.`, alerta: true };
+  if (s.status === 'cancelada') return { texto: `Assinatura cancelada. O plano ${s.planName} vale até ${dataCurta(s.currentPeriodEnd)}.`, alerta: true };
+  if (s.plan === 'interno') return { texto: 'Conta interna, sem limite de uso.', alerta: false };
+  return { texto: `Plano ${s.planName} ativo${s.currentPeriodEnd ? `, renovação em ${dataCurta(s.currentPeriodEnd)}` : ''}.`, alerta: false };
+}
+
+/** Avisos do plano para o topo do painel: situação ruim ou uso a partir de 80%. */
+function avisosPlano(b) {
+  const avisos = [];
+  if (!b.billing.enabled) return avisos; // modo piloto: sem plano, sem limite
+  const sit = situacaoPlano(b);
+  if (sit.alerta) avisos.push(esc(sit.texto));
+  const pc = b.percent.conversations;
+  if (b.subscription.active && pc !== null && pc >= 80) {
+    avisos.push(pc >= 100
+      ? `O limite de ${b.limits.conversations} conversas do mês acabou: leads novos vão direto para o corretor.`
+      : `Você já usou ${pc}% das ${b.limits.conversations} conversas do mês.`);
+  }
+  return avisos;
+}
+
+let planoEscolhido = null;
+
+async function carregarPlano() {
+  const view = $('view-plano');
+  view.querySelector('.erro').textContent = '';
+  try {
+    state.billing = await api('/billing');
+    renderPlano();
+  } catch (err) {
+    view.querySelector('.erro').textContent = err.message;
+  }
+  carregarWhatsapp();
+}
+
+const QUALIDADE = { GREEN: 'boa', YELLOW: 'média', RED: 'baixa' };
+async function carregarWhatsapp() {
+  $('whatsapp-erro').textContent = '';
+  const admin = state.user?.role === 'admin';
+  try {
+    const w = await api('/whatsapp');
+    if (w.connected) {
+      const partes = [`Conectado: ${telefone(w.displayPhone)}`];
+      if (w.verifiedName) partes.push(`nome ${w.verifiedName}`);
+      if (w.quality) partes.push(`qualidade ${QUALIDADE[w.quality] || w.quality}`);
+      $('whatsapp-situacao').textContent = `${partes.join(', ')}.`;
+    } else {
+      $('whatsapp-situacao').textContent = w.signupAvailable
+        ? 'Nenhum número conectado. Conecte o WhatsApp da empresa para a assistente atender.'
+        : 'Nenhum número conectado. A conexão pelo painel ainda não está disponível: fale com o suporte.';
+    }
+    $('whatsapp-conectar').hidden = !(admin && !w.connected && w.signupAvailable);
+    $('whatsapp-desconectar').hidden = !(admin && w.connected && w.ownToken);
+  } catch (err) {
+    $('whatsapp-erro').textContent = err.message;
+  }
+}
+$('whatsapp-conectar').addEventListener('click', async (ev) => {
+  ev.target.disabled = true;
+  $('whatsapp-erro').textContent = '';
+  try {
+    await conectarWhatsapp();
+    await carregarWhatsapp();
+    await atualizarAvisos();
+  } catch (err) {
+    $('whatsapp-erro').textContent = err.message;
+  } finally {
+    ev.target.disabled = false;
+  }
+});
+$('whatsapp-desconectar').addEventListener('click', async (ev) => {
+  if (!confirm('Desconectar o WhatsApp? A assistente para de atender por esse número até conectar de novo.')) return;
+  ev.target.disabled = true;
+  $('whatsapp-erro').textContent = '';
+  try {
+    state.account = await api('/whatsapp/disconnect', { method: 'POST' });
+    await carregarWhatsapp();
+    await atualizarAvisos();
+  } catch (err) {
+    $('whatsapp-erro').textContent = err.message;
+  } finally {
+    ev.target.disabled = false;
+  }
+});
+
+function renderPlano() {
+  const b = state.billing;
+  const sit = situacaoPlano(b);
+  $('plano-situacao').textContent = sit.texto;
+  $('plano-situacao').className = sit.alerta ? 'alerta-texto' : 'sutil';
+
+  const de = (usado, limite) => (limite === null ? String(usado) : `${usado} de ${limite}`);
+  const sub = (pc, semLimite) => (pc === null ? semLimite : `${pc}% do plano`);
+  $('plano-uso').innerHTML = [
+    { rotulo: 'Conversas no mês', valor: de(b.usage.conversations, b.limits.conversations), sub: sub(b.percent.conversations, 'Sem limite'), alerta: b.percent.conversations >= 80 },
+    { rotulo: 'Imóveis ativos', valor: de(b.usage.activeProperties, b.limits.properties), sub: sub(b.percent.properties, 'Sem limite'), alerta: b.percent.properties >= 100 },
+    { rotulo: 'Respostas da assistente', valor: String(b.usage.aiCalls), sub: 'Rodadas de conversa no mês' },
+    { rotulo: 'Avisos pagos enviados', valor: String(b.usage.templatesSent), sub: 'Templates do WhatsApp no mês' },
+  ].map(tile).join('');
+
+  const admin = state.user?.role === 'admin';
+  $('bloco-planos').hidden = !b.billing.enabled; // modo piloto: sem planos à venda
+  // Plano atual: pago e em dia, ou atrasado (a cobrança em aberto é paga pelo link que o sistema de cobrança enviou).
+  const atual = ['ativa', 'inadimplente'].includes(b.subscription.status) ? b.subscription.plan : null;
+  const cancelado = b.subscription.status === 'cancelada' ? b.subscription.plan : null;
+  $('planos').innerHTML = b.plans.map((p) => `
+    <article class="plano-cartao${atual === p.key ? ' atual' : ''}">
+      <h3>${esc(p.name)}</h3>
+      <p class="preco">${esc(reais(p.priceCents))}<span>/mês</span></p>
+      <p class="sutil">${esc(p.description)}</p>
+      <ul>
+        <li>${p.limits.conversations === null ? 'Conversas sem limite' : `${p.limits.conversations} conversas por mês`}</li>
+        <li>${p.limits.properties === null ? 'Imóveis sem limite' : `Até ${p.limits.properties} imóveis ativos`}</li>
+        <li>${p.limits.users === null ? 'Usuários sem limite' : `${p.limits.users} ${p.limits.users === 1 ? 'usuário' : 'usuários'}`}</li>
+      </ul>
+      ${atual === p.key
+        ? `<p class="selo">Seu plano</p>${b.subscription.status === 'inadimplente' ? '<p class="sutil">A cobrança em aberto está no e-mail enviado pelo sistema de cobrança.</p>' : ''}`
+        : admin
+          ? `<button type="button" class="botao primario" data-plano="${esc(p.key)}">${cancelado === p.key ? 'Reativar' : 'Escolher'} ${esc(p.name)}</button>`
+          : '<p class="sutil">Só o administrador da conta pode mudar o plano.</p>'}
+    </article>`).join('');
+  $('planos').querySelectorAll('[data-plano]').forEach((btn) => btn.addEventListener('click', () => abrirCheckout(btn.dataset.plano)));
+  renderRotina();
+  // Privacidade e exclusão da conta: só o admin vê.
+  $('bloco-privacidade').hidden = !admin;
+  $('bloco-excluir-conta').hidden = !admin;
+  if (admin && state.account) {
+    $('form-retencao').retentionMonths.value = String(state.account.tenant.retentionMonths || 12);
+    $('excluir-slug').textContent = state.account.tenant.slug;
+  }
+  // Modo local: simular o aviso do provedor depois de escolher um plano (ou com um plano pago já ativo).
+  const s = b.subscription;
+  $('plano-simulacao').hidden = !(b.billing.simulated && (s.pendingPlan || !['teste', 'interno'].includes(s.plan)));
+}
+
+function abrirCheckout(chave) {
+  const p = state.billing.plans.find((x) => x.key === chave);
+  planoEscolhido = chave;
+  $('checkout-plano').textContent = `Plano ${p.name}: ${reais(p.priceCents)} por mês.`;
+  $('form-checkout').hidden = false;
+  $('form-checkout').querySelector('.erro').textContent = '';
+  $('form-checkout').document.focus();
+}
+$('checkout-cancelar').addEventListener('click', () => { $('form-checkout').hidden = true; planoEscolhido = null; });
+$('form-checkout').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  enviarForm($('form-checkout'), async (f) => {
+    const r = await api('/billing/checkout', { method: 'POST', body: { plan: planoEscolhido, document: f.get('document') } });
+    if (r.checkoutUrl) { location.href = r.checkoutUrl; return; } // página de pagamento do provedor
+    $('form-checkout').hidden = true;
+    $('form-checkout').reset();
+    await carregarPlano();
+    if (!r.simulated) throw new Error('A cobrança foi criada, mas o link de pagamento ainda não saiu. Tente de novo em instantes.');
+  });
+});
+document.querySelectorAll('[data-simular]').forEach((btn) =>
+  btn.addEventListener('click', async () => {
+    const erro = $('view-plano').querySelector('.erro');
+    erro.textContent = '';
+    btn.disabled = true;
+    try {
+      await api('/dev/billing/simulate', { method: 'POST', body: { kind: btn.dataset.simular } });
+      await carregarPlano();
+      await atualizarAvisos();
+    } catch (err) {
+      erro.textContent = err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  })
+);
+
+$('form-retencao').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const form = ev.target;
+  form.querySelector('.ok').textContent = '';
+  enviarForm(form, async (f) => {
+    state.account = await api('/account/privacy', { method: 'PATCH', body: { retentionMonths: Number(f.get('retentionMonths')) } });
+    form.querySelector('.ok').textContent = 'Prazo salvo.';
+  });
+});
+$('form-excluir-conta').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const form = ev.target;
+  enviarForm(form, async (f) => {
+    if (f.get('slug').trim().toLowerCase() !== state.account.tenant.slug) throw new Error('O endereço digitado não é o desta conta.');
+    if (!confirm('Última confirmação: excluir a conta e todos os dados para sempre?')) return;
+    await api('/account', { method: 'DELETE', body: { slug: f.get('slug').trim().toLowerCase(), password: f.get('password') } });
+    form.reset();
+    limparSessao();
+    cofre.set('aim.semAuto', '1');
+    state.account = null;
+    state.mensagem = 'Conta excluída. Todos os dados foram apagados.';
+    mostrarView('login');
+  });
+});
+
+/** Monta o aviso do topo: mensagem pendente, e-mail, plano e modo local. */
+async function atualizarAvisos() {
+  const avisos = [];
+  if (state.mensagem) { avisos.push(esc(state.mensagem)); state.mensagem = ''; }
+  if (state.account && !state.account.user.emailVerified) avisos.push(`Confirme seu e-mail: enviamos um link para ${esc(state.account.user.email)}.`);
+  try {
+    state.billing = await api('/billing');
+    avisos.push(...avisosPlano(state.billing));
+  } catch { /* sem aviso de plano se a consulta falhar */ }
+  try { atualizarContador((await api('/today')).avisos.length); } catch { /* contador fica como está */ }
+  if (state.dev) {
+    if (!state.dev.aiConfigured) avisos.push('A assistente não vai responder: preencha <code>ANTHROPIC_API_KEY</code> no .env e reinicie a API.');
+    if (state.dev.waMock) avisos.push('Modo simulação: nenhuma mensagem sai para o WhatsApp de verdade.');
+    else if (state.dev.tenant && !state.dev.tenant.waConfigured) avisos.push('A conta ainda não tem WhatsApp conectado.');
+  }
+  $('aviso').innerHTML = avisos.join(' ');
+  $('aviso').hidden = avisos.length === 0;
+}
+
 async function iniciar() {
   $('usuario-nome').textContent = state.user?.name || '';
   try {
@@ -266,19 +1082,12 @@ async function iniciar() {
   } catch {
     state.dev = null; // produção: sem simulador
   }
-  const avisos = [];
-  if (state.dev) {
-    $('conta-nome').textContent = state.dev.tenant?.name || '';
-    if (!state.dev.aiConfigured) avisos.push('A assistente não vai responder: preencha <code>ANTHROPIC_API_KEY</code> no .env e reinicie a API.');
-    if (state.dev.waMock) avisos.push('Modo simulação: nenhuma mensagem sai para o WhatsApp de verdade.');
-    if (state.dev.tenant && !state.dev.tenant.waConfigured) avisos.push('A conta não tem número de WhatsApp cadastrado (rode o seed).');
-  }
-  $('aviso').innerHTML = avisos.join(' ');
-  $('aviso').hidden = avisos.length === 0;
+  await carregarConta();
+  await atualizarAvisos();
   $('novo-simulado').hidden = !state.dev;
   $('enviar-lead').hidden = !state.dev;
   $('conversa-vazia-dica').textContent = state.dev ? 'Ou use "Simular um lead novo" para conversar como se fosse um cliente chegando pelo anúncio.' : '';
-  mostrarView('leads');
+  mostrarView(state.account.onboarding.completed ? 'hoje' : 'inicio');
 }
 
 // ---------------------------------------------------------------------------
@@ -490,12 +1299,47 @@ function renderFicha(antes) {
     sel.value = ['em_atendimento', 'transferido', 'visita_agendada', 'descartado'].includes(l.status) ? l.status : 'em_atendimento';
     sel.disabled = l.status === 'opt_out';
   }
+  const admin = state.user?.role === 'admin';
+  $('lead-privacidade').hidden = !admin || l.anonymized;
+  $('lead-anonimizado').hidden = !l.anonymized;
+  if (l.anonymized) sel.disabled = true;
+  renderVisitaLead(l);
   $('lead-handoff').textContent = l.handoffAt ? `Transferido em ${dataHora(l.handoffAt)}${l.handoffReason ? `: ${l.handoffReason}` : ''}` : (l.status === 'opt_out' ? 'O lead pediu para não receber mais mensagens.' : '');
 }
 $('lead-status').addEventListener('change', async (ev) => {
   if (!state.lead) return;
   try { await api(`/leads/${state.lead.id}`, { method: 'PATCH', body: { status: ev.target.value } }); await carregarLead(); await carregarLeads(); }
   catch (err) { $('mensagem-erro').textContent = err.message; }
+});
+
+// LGPD: cópia dos dados e exclusão a pedido do titular.
+$('lead-exportar').addEventListener('click', async () => {
+  if (!state.lead) return;
+  $('lead-privacidade-erro').textContent = '';
+  try {
+    const dados = await api(`/leads/${state.lead.id}/privacy-export`);
+    const blob = new Blob([JSON.stringify(dados, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `dados-do-lead-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  } catch (err) {
+    $('lead-privacidade-erro').textContent = err.message;
+  }
+});
+$('lead-excluir').addEventListener('click', async () => {
+  if (!state.lead) return;
+  const nome = state.lead.name || telefone(state.lead.phone);
+  if (!confirm(`Excluir os dados de ${nome}? A conversa e os dados pessoais somem e não dá para desfazer.`)) return;
+  $('lead-privacidade-erro').textContent = '';
+  try {
+    await api(`/leads/${state.lead.id}`, { method: 'DELETE' });
+    await carregarLead();
+    await carregarLeads();
+  } catch (err) {
+    $('lead-privacidade-erro').textContent = err.message;
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -955,6 +1799,27 @@ async function exportarLeads(btn, view) {
   if (tema) document.documentElement.dataset.theme = tema;
   atualizarBotaoTema();
   if (cofre.get('aim.menu') === 'recolhido') aplicarMenu(true);
+
+  // Link do e-mail: "redefinir" abre a tela de nova senha; "verificar" confirma e segue o fluxo normal.
+  if ((await tratarLinkDoEmail()) === 'redefinir') {
+    mostrarView('redefinir');
+    return;
+  }
+  // Modo piloto: cadastro fechado esconde "Criar uma conta" e ignora o link direto.
+  try {
+    const cfg = await (await fetch(`${API}/public-config`)).json();
+    state.publicConfig = cfg.data || {};
+  } catch {
+    state.publicConfig = {};
+  }
+  const cadastroAberto = state.publicConfig.signupEnabled !== false;
+  $('link-cadastro').hidden = !cadastroAberto;
+  // Link direto para criar conta ou recuperar a senha (ex.: botão "Teste grátis" do site).
+  const telaPedida = { '#cadastro': cadastroAberto ? 'cadastro' : 'login', '#esqueci': 'esqueci' }[location.hash];
+  if (telaPedida && !state.accessToken) {
+    mostrarView(telaPedida);
+    return;
+  }
 
   if (state.accessToken) {
     try { await iniciar(); return; } catch { limparSessao(); }

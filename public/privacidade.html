@@ -3,28 +3,81 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Privacidade do atendimento</title>
-  <style>
-    body { margin: 0; background: #e8ecf1; color: #14213d; font-family: system-ui, sans-serif; line-height: 1.6; }
-    main { max-width: 640px; margin: 48px auto; background: #fff; border: 1px solid #cfd6e0; padding: 32px 36px; }
-    h1 { font-size: 24px; margin: 0 0 16px; }
-    h2 { font-size: 17px; margin: 24px 0 8px; }
-    p { margin: 0 0 12px; }
-  </style>
+  <title>Política de privacidade · Imobi</title>
+  <meta name="description" content="Como o Imobi trata os dados das imobiliárias, dos corretores e dos leads atendidos pelo WhatsApp.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="stylesheet" href="/legal.css">
 </head>
 <body>
 <main>
-  <h1>Como usamos seus dados neste atendimento</h1>
-  <p>Este número de WhatsApp é atendido por uma assistente automática que responde dúvidas sobre o imóvel anunciado e, quando você quiser visitar, passa a conversa para o corretor.</p>
-  <h2>O que guardamos</h2>
-  <p>Seu número de WhatsApp, o nome do seu perfil e as mensagens trocadas. Se você informar renda, garantia, número de moradores, pets ou prazo de mudança, guardamos esses dados para avaliar se o imóvel serve para você.</p>
-  <h2>Para que usamos</h2>
-  <p>Só para este atendimento: responder suas perguntas, verificar se o imóvel atende ao que você precisa e agendar uma visita. Não vendemos nem compartilhamos seus dados com terceiros fora do atendimento.</p>
-  <h2>Como parar de receber mensagens</h2>
-  <p>Responda <strong>SAIR</strong> a qualquer momento. A assistente para na hora.</p>
-  <h2>Seus direitos</h2>
-  <p>Você pode pedir uma cópia dos seus dados, a correção ou a exclusão deles falando com a imobiliária pelo mesmo número.</p>
-  <p><em>Este texto é um modelo de desenvolvimento. Substitua pela política de privacidade da imobiliária antes de colocar no ar.</em></p>
+  <p class="rascunho">RASCUNHO para revisão jurídica. Os campos [A PREENCHER] precisam ser completados antes de publicar.</p>
+  <h1>Política de privacidade</h1>
+  <p class="versao">Versão 2026-09-25</p>
+
+  <h2>1. Quem somos</h2>
+  <p>O Imobi é um serviço da <strong>WPX Systems</strong> ([RAZÃO SOCIAL A PREENCHER], CNPJ [A PREENCHER], [ENDEREÇO A PREENCHER]). Ele atende pelo WhatsApp as pessoas que chegam pelos anúncios de imóveis dos nossos clientes, imobiliárias e corretores.</p>
+  <p>Temos dois papéis diferentes na LGPD (Lei 13.709/2018):</p>
+  <ul>
+    <li><strong>Controladora</strong> dos dados de quem tem conta no Imobi: a imobiliária ou o corretor, os usuários do painel e a cobrança.</li>
+    <li><strong>Operadora</strong> dos dados dos leads, as pessoas que escrevem para o WhatsApp do cliente. Quem decide sobre esses dados é a imobiliária ou o corretor. O aviso para o lead está em <a href="/privacidade/atendimento">/privacidade/atendimento</a>.</li>
+  </ul>
+
+  <h2>2. Dados de quem tem conta</h2>
+  <table>
+    <thead><tr><th>Dado</th><th>Para quê</th><th>Base legal</th></tr></thead>
+    <tbody>
+      <tr><td>Nome da imobiliária ou do corretor e endereço da conta</td><td>Identificar a conta</td><td>Execução de contrato</td></tr>
+      <tr><td>Nome, e-mail e senha (guardada cifrada, de forma irreversível) dos usuários</td><td>Entrar no painel, confirmar o e-mail e recuperar a senha</td><td>Execução de contrato</td></tr>
+      <tr><td>WhatsApp da empresa e do responsável</td><td>Atender os leads e avisar quando um lead é transferido</td><td>Execução de contrato</td></tr>
+      <tr><td>Registro do aceite destes documentos (versão e data)</td><td>Provar o aceite</td><td>Cumprimento de obrigação e defesa de direitos</td></tr>
+      <tr><td>Referência da assinatura no sistema de cobrança</td><td>Cobrar o plano</td><td>Execução de contrato</td></tr>
+    </tbody>
+  </table>
+  <p>O CPF ou CNPJ de quem paga vai direto para o sistema de cobrança (Asaas) e <strong>não fica guardado no Imobi</strong>.</p>
+
+  <h2>3. Dados dos leads (como operadora)</h2>
+  <p>Tratamos, em nome do cliente, o telefone e o nome do perfil do WhatsApp, as mensagens trocadas e o que a pessoa informa para ser atendida: renda, garantia, número de moradores, pet, prazo de mudança e interesse em visitar. Usamos esses dados só para executar o atendimento que o cliente contratou.</p>
+  <p>O clique no link do anúncio registra só a data, o imóvel e a origem. Não guardamos IP nem dados do aparelho.</p>
+
+  <h2>4. Com quem compartilhamos</h2>
+  <table>
+    <thead><tr><th>Empresa</th><th>O que recebe</th><th>Para quê</th></tr></thead>
+    <tbody>
+      <tr><td>Anthropic (EUA)</td><td>Texto das conversas, nome do lead e dados dos imóveis</td><td>Gerar as respostas da assistente virtual</td></tr>
+      <tr><td>Meta, WhatsApp (EUA e outros países)</td><td>Telefone, nome do perfil e mensagens</td><td>Enviar e receber as mensagens</td></tr>
+      <tr><td>Asaas (Brasil)</td><td>Nome da conta, e-mail do administrador e CPF/CNPJ de quem paga</td><td>Cobrança do plano</td></tr>
+      <tr><td>Resend (EUA)</td><td>Nome e e-mail do usuário</td><td>E-mails de confirmação e de nova senha</td></tr>
+      <tr><td>Google Fonts (EUA)</td><td>Endereço IP de quem abre o painel</td><td>Carregar as fontes do painel</td></tr>
+      <tr><td>[HOSPEDAGEM A PREENCHER]</td><td>Todos os dados, armazenados</td><td>Infraestrutura</td></tr>
+    </tbody>
+  </table>
+  <p>Algumas dessas empresas ficam fora do Brasil. A transferência internacional segue o Art. 33 da LGPD, com as garantias contratuais de cada fornecedor. Não vendemos dados.</p>
+
+  <h2>5. Por quanto tempo guardamos</h2>
+  <ul>
+    <li><strong>Conversas e dados pessoais dos leads:</strong> até o prazo escolhido pelo cliente, de 3 a 24 meses sem contato, 12 meses por padrão. Depois disso são apagados automaticamente. Ficam só a classificação, a origem e as datas, sem ligação com a pessoa, para os números do funil.</li>
+    <li><strong>Dados da conta:</strong> enquanto a conta existir. O administrador pode excluir a conta pelo painel, e tudo é apagado na hora.</li>
+    <li><strong>Links de confirmação e de nova senha:</strong> valem 48 horas e 1 hora. São apagados 30 dias depois de usados ou vencidos.</li>
+    <li><strong>Cópias de segurança e registros técnicos:</strong> [PRAZO A PREENCHER].</li>
+  </ul>
+
+  <h2>6. Seus direitos</h2>
+  <p>Você pode pedir confirmação, acesso, correção, anonimização, exclusão, portabilidade e informação sobre compartilhamento dos seus dados, e revogar o consentimento quando ele for a base.</p>
+  <ul>
+    <li><strong>Quem tem conta:</strong> escreva para <a href="mailto:lgpd@wpxsystems.com.br">lgpd@wpxsystems.com.br</a> [CONFIRMAR]. O administrador também exclui a conta no próprio painel.</li>
+    <li><strong>Lead:</strong> o pedido é feito à imobiliária ou ao corretor que atendeu você, que tem no painel as ferramentas para baixar ou excluir seus dados. Se não conseguir, escreva para o mesmo e-mail e encaminhamos ao responsável.</li>
+  </ul>
+  <p>Encarregado de dados: [NOME A PREENCHER], <a href="mailto:lgpd@wpxsystems.com.br">lgpd@wpxsystems.com.br</a>. Você também pode reclamar à ANPD.</p>
+
+  <h2>7. Segurança</h2>
+  <p>Conexão cifrada (HTTPS). Senhas guardadas com hash bcrypt. Token do WhatsApp cifrado com AES-256. Isolamento dos dados de cada cliente no banco de dados. Registros técnicos sem o conteúdo das conversas.</p>
+
+  <h2>8. Cookies</h2>
+  <p>O painel não usa cookies de publicidade nem de rastreamento. Ele guarda no seu navegador a sessão e as preferências de tema e de menu.</p>
+
+  <h2>9. Mudanças</h2>
+  <p>Avisamos os clientes com 7 dias de antecedência sobre mudanças relevantes. A versão em vigor aparece no topo.</p>
+  <p><a href="/termos">Termos de uso</a> · <a href="/painel/">Voltar ao painel</a></p>
 </main>
 </body>
 </html>

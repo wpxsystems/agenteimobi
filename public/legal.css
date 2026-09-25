@@ -1,0 +1,35 @@
+/* Páginas públicas (privacidade, termos): mesma paleta do painel, sem dependências externas. */
+:root {
+  --fundo: #f3efe6; --papel: #ffffff; --tinta: #1c2a24; --suave: #5b6b63; --linha: #ddd6c8;
+  --destaque: #123c2b; --aviso-fundo: #f6eedc; --aviso-texto: #6b4f12; --aviso-linha: #e3d3a6;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fundo: #161a18; --papel: #1f2622; --tinta: #e8ebe6; --suave: #a9b3ac; --linha: #303a34;
+    --destaque: #5cc28c; --aviso-fundo: #2e2a1c; --aviso-texto: #ead9a6; --aviso-linha: #5a4d2c;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--fundo); color: var(--tinta); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 16px; line-height: 1.6; }
+main { max-width: 760px; margin: 40px auto; background: var(--papel); border: 1px solid var(--linha); border-radius: 8px; padding: 36px 40px; }
+h1 { font-family: Georgia, serif; font-size: 30px; line-height: 1.2; margin: 0 0 4px; color: var(--destaque); }
+h2 { font-size: 18px; margin: 28px 0 8px; }
+p, ul { margin: 0 0 12px; }
+ul { padding-left: 22px; }
+li { margin-bottom: 4px; }
+a { color: var(--destaque); font-weight: 500; }
+.versao { color: var(--suave); font-size: 14px; }
+.rascunho { background: var(--aviso-fundo); color: var(--aviso-texto); border: 1px solid var(--aviso-linha); border-radius: 6px; padding: 8px 12px; font-size: 14px; }
+table { width: 100%; border-collapse: collapse; margin: 8px 0 14px; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--linha); }
+th { color: var(--suave); font-weight: 600; }
+@media (max-width: 600px) {
+  main { margin: 0; border: 0; border-radius: 0; padding: 24px 16px; }
+  table, thead, tbody, tr, th, td { display: block; }
+  thead { display: none; }
+  tr { border-bottom: 1px solid var(--linha); padding: 8px 0; }
+  td { border: 0; padding: 2px 0; }
+  td:first-child { font-weight: 600; }
+}

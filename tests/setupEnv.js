@@ -18,7 +18,8 @@ const defaults = {
   WA_VERIFY_TOKEN: 'verify-token-1234567890',
   ANTHROPIC_API_KEY: 'test-key',
   ANTHROPIC_MODEL: 'claude-test',
-  REPLY_DEBOUNCE_MS: '50',
+  REPLY_DEBOUNCE_MS: '300',
+  WA_TOKEN_ENC_KEY: 'c'.repeat(64),
 };
 
 for (const [k, v] of Object.entries(defaults)) {
@@ -26,7 +27,9 @@ for (const [k, v] of Object.entries(defaults)) {
 }
 // Valores que os testes comparam literalmente: não podem vir do .env local.
 process.env.LOG_LEVEL = 'fatal';
-process.env.REPLY_DEBOUNCE_MS = '50';
+// Debounce curto para os testes, mas maior que o tempo entre dois webhooks seguidos passando pela fila.
+process.env.REPLY_DEBOUNCE_MS = '300';
+process.env.JOB_POLL_MS = '50';
 process.env.PUBLIC_BASE_URL = defaults.PUBLIC_BASE_URL;
 process.env.PRIVACY_URL = defaults.PRIVACY_URL;
 process.env.WA_MOCK = 'false'; // os testes mockam o client; nunca depender do .env local
