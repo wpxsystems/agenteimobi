@@ -108,7 +108,9 @@ p { margin: 0; }
   background: var(--floresta); color: #e8efe9;
   display: flex; flex-direction: column; gap: 8px;
   padding: 20px 14px; min-height: 0; overflow: hidden;
+  cursor: pointer; user-select: none;
 }
+.lateral button { cursor: pointer; }
 .marca { display: flex; align-items: center; gap: 10px; padding: 4px 8px 18px; }
 .marca-simbolo { width: 30px; height: 30px; color: var(--dourado); flex: none; }
 .marca-texto { min-width: 0; flex: 1; overflow: hidden; }
@@ -445,7 +447,7 @@ input[readonly] { background: var(--areia); color: var(--tinta-suave); }
 }
 @media (max-width: 900px) {
   body, body.menu-recolhido { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
-  .lateral, .menu-recolhido .lateral { flex-direction: row; align-items: center; gap: 6px; padding: 6px 10px; overflow: visible; }
+  .lateral, .menu-recolhido .lateral { flex-direction: row; align-items: center; gap: 6px; padding: 6px 10px; overflow: visible; cursor: default; }
   .marca, .menu-recolhido .marca { padding: 0; gap: 0; flex-direction: row; flex: none; }
   .marca-simbolo { width: 26px; height: 26px; }
   .marca-conta, .recolher { display: none; }

@@ -168,7 +168,17 @@ function aplicarMenu(recolhido) {
   // Gráficos dependem da largura disponível: redesenha depois da transição.
   if (DASHBOARDS.includes(state.view)) setTimeout(redesenharSeries, 220);
 }
-$('recolher').addEventListener('click', () => aplicarMenu(!document.body.classList.contains('menu-recolhido')));
+function alternarMenu() {
+  aplicarMenu(!document.body.classList.contains('menu-recolhido'));
+}
+$('recolher').addEventListener('click', alternarMenu);
+// Clicar em qualquer área livre do menu (marca, espaços) também recolhe/expande.
+// Botões (abas, tema, sair) continuam com a própria ação. Em telas pequenas o menu vira barra e não recolhe.
+$('topo').addEventListener('click', (e) => {
+  if (e.target.closest('button, a, input, select')) return;
+  if (getComputedStyle($('recolher')).display === 'none') return;
+  alternarMenu();
+});
 
 // ---------------------------------------------------------------------------
 // Navegação
