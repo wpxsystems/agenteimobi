@@ -24,6 +24,15 @@ jest.mock('../src/services/ai/claude.client', () => ({
 
 const run = process.env.TEST_DB === '1' ? describe : describe.skip;
 
+// Trava: o teste TRUNCA leads, mensagens e cliques. Só roda num banco cujo nome termina em "_test",
+// para nunca apagar o banco de desenvolvimento (com as contas de demonstração) por engano.
+if (process.env.TEST_DB === '1') {
+  for (const k of ['DATABASE_URL', 'DATABASE_MIGRATION_URL']) {
+    const nome = String(process.env[k] || '').split('?')[0].split('/').pop();
+    if (!/_test$/.test(nome)) throw new Error(`${k} aponta para "${nome}": os testes de integração só rodam num banco *_test`);
+  }
+}
+
 run('fluxo WhatsApp -> IA -> classificação (integração)', () => {
   const request = require('supertest');
   const { Sequelize } = require('sequelize');
@@ -1046,7 +1055,7 @@ run('fluxo WhatsApp -> IA -> classificação (integração)', () => {
       expect(prompt).toContain('<horarios_disponiveis>');
       expect(l.bot_active).toBe(true); // a assistente segue tirando dúvidas até a visita
       expect(l.handoff_reason).toBe('visita_agendada');
-      expect(l.visit_preference).toMatch(/^\w{3} \d{2}\/\d{2} às \d{2}:00$/);
+      expect(l.visit_preference).toMatch(/^(dom|seg|ter|qua|qui|sex|sáb) \d{2}\/\d{2} às \d{2}:00$/); // "sáb" tem acento: \w não serve
       const [v] = await owner.query('SELECT status, created_by, starts_at FROM aim_visit WHERE lead_id = :id', { replacements: { id: l.id }, type: 'SELECT' });
       expect(v).toMatchObject({ status: 'agendada', created_by: 'assistente' });
       expect(new Date(v.starts_at).toISOString()).toBe(/\(id: ([^)]+)\)/.exec(prompt)[1]);
@@ -1312,6 +1321,28 @@ run('fluxo WhatsApp -> IA -> classificação (integração)', () => {
       expect(lista.find((c) => c.slug === 'piloto-teste')).toMatchObject({ plano: 'interno', situacao: 'ativa', usuarios: 1, leads: 0, whatsapp: false });
       expect(cli.parseArgs(['criar', '--slug', 'x', '--desconectar'])).toEqual({ command: 'criar', opts: { slug: 'x', desconectar: true } });
     });
+  });
+
+  test('leads esperando o corretor: filtro, contador e marca na lista e na ficha', async () => {
+    const adm = { authorization: `Bearer ${token}` };
+    const l = await leadRow('5511977001102');
+    await owner.query(`UPDATE aim_lead SET status = 'transferido', bot_active = false, handoff_at = now() - interval '20 minutes' WHERE id = :id`, { replacements: { id: l.id } });
+    const todos = await request(app).get('/api/v1/leads?limit=100').set(adm);
+    const esperando = await request(app).get('/api/v1/leads?awaiting=true').set(adm);
+    expect(esperando.status).toBe(200);
+    expect(esperando.body.data.items.map((x) => x.id)).toContain(l.id);
+    expect(esperando.body.data.items.every((x) => x.awaitingBroker && x.status === 'transferido')).toBe(true);
+    expect(esperando.body.data.awaitingTotal).toBe(esperando.body.data.total);
+    expect(todos.body.data.awaitingTotal).toBe(esperando.body.data.total); // o contador não depende do filtro
+    expect(todos.body.data.items.find((x) => x.id === l.id).awaitingBroker).toBe(true);
+    expect((await request(app).get(`/api/v1/leads/${l.id}`).set(adm)).body.data.awaitingBroker).toBe(true);
+    // Corretor respondeu: sai da lista de espera
+    await owner.query(`INSERT INTO aim_message (tenant_id, lead_id, direction, author, body) VALUES (:t, :id, 'out', 'human', 'Oi, sou o corretor')`, { replacements: { t: l.tenant_id, id: l.id } });
+    const depois = await request(app).get('/api/v1/leads?awaiting=true').set(adm);
+    expect(depois.body.data.items.map((x) => x.id)).not.toContain(l.id);
+    expect(depois.body.data.awaitingTotal).toBe(esperando.body.data.awaitingTotal - 1);
+    expect((await request(app).get(`/api/v1/leads/${l.id}`).set(adm)).body.data.awaitingBroker).toBe(false);
+    expect((await request(app).get('/api/v1/leads?awaiting=false').set(adm)).status).toBe(422);
   });
 
   test('login com senha errada', async () => {

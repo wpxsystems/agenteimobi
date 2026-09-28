@@ -131,6 +131,12 @@ npm test                          # unitários (sem banco)
 TEST_DB=1 npm test                # + integração (Postgres de TESTE já migrado e com seed)
 ```
 
+A integração **trunca** leads, mensagens e cliques: só roda se `DATABASE_URL` e `DATABASE_MIGRATION_URL`
+apontarem para um banco cujo nome termina em `_test` (ex.: `agente_imobi_test`). Passe as duas variáveis
+na linha de comando, sem mexer no `.env`. Para `DATABASE_MIGRATION_URL` use um papel que enxergue todas as
+linhas (superusuário ou `BYPASSRLS`): as verificações leem as tabelas fora do contexto de conta, e o
+`aim_owner` comum não vê nada por causa do RLS.
+
 WhatsApp e Anthropic são mockados nos testes. Nenhuma mensagem real é enviada.
 
 ## Custos a considerar no teste

@@ -50,6 +50,8 @@ const leadList = z
     classification: z.enum(['indefinido', 'quente', 'morno', 'frio']).optional(),
     status: z.enum(['novo', 'em_atendimento', 'transferido', 'visita_agendada', 'descartado', 'opt_out']).optional(),
     propertyId: uuid.optional(),
+    // "true" = só os transferidos que ainda esperam a primeira resposta do corretor
+    awaiting: z.enum(['true']).optional(),
     limit: z.coerce.number().int().min(1).max(100).default(50),
     offset: z.coerce.number().int().min(0).default(0),
   })

@@ -80,8 +80,8 @@ const properties = {
 const leads = {
   async list(req, res) {
     const query = schemas.leadList.parse(req.query);
-    const { rows, count } = await leadService.list(req.auth.tenantId, query);
-    ok(res, { items: rows.map(serialize.lead), total: count, limit: query.limit, offset: query.offset });
+    const { rows, count, awaitingTotal } = await leadService.list(req.auth.tenantId, query);
+    ok(res, { items: rows.map(serialize.lead), total: count, awaitingTotal, limit: query.limit, offset: query.offset });
   },
   async get(req, res) {
     const { id } = schemas.idParam.parse(req.params);

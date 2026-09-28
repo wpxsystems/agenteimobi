@@ -37,8 +37,19 @@ function describeProperty(p) {
   return lines.join('\n');
 }
 
-const shortLine = (p) =>
-  `- #${p.code}: ${p.title} (${p.locationSummary || 's/ local'}) — ${brl(p.priceCents)}${p.dealType === 'venda' ? ' (venda)' : '/mês'}`;
+/**
+ * Uma linha por imóvel, COM as regras que decidem se ele serve ao lead (pet, moradores, garantias).
+ * Sem elas a IA oferecia imóvel incompatível ou prometia "confirmar com o corretor" algo que está no cadastro.
+ */
+function shortLine(p) {
+  const partes = [`${brl(p.priceCents)}${p.dealType === 'venda' ? ' (venda)' : '/mês'}`];
+  if (p.feesCents > 0) partes.push(`+ ${brl(p.feesCents)} de condomínio/IPTU`);
+  if (p.bedrooms !== null && p.bedrooms !== undefined) partes.push(p.bedrooms === 0 ? 'studio/kitnet' : `${p.bedrooms} quarto(s)`);
+  if (p.allowsPets !== null && p.allowsPets !== undefined) partes.push(p.allowsPets ? 'aceita pet' : 'NÃO aceita pet');
+  if (p.maxOccupants) partes.push(`até ${p.maxOccupants} morador(es)`);
+  if (p.acceptedGuarantees?.length) partes.push(`garantias: ${p.acceptedGuarantees.map((g) => GUARANTEE_LABEL[g] || g).join(', ')}`);
+  return `- #${p.code}: ${p.title} (${p.locationSummary || 's/ local'}) — ${partes.join('; ')}`;
+}
 
 /**
  * @param {Array<{ id: string, label: string }>} [p.visitSlots] horários livres de visita (a IA só pode escolher entre eles)
@@ -83,9 +94,11 @@ ${imovelBlock}${alternativasBlock}
 <classificacao_atual>${lead.classification}</classificacao_atual>${duvidasBlock}${horariosBlock}
 
 Regras de conduta:
-- Escreva como uma pessoa no WhatsApp: mensagens curtas, cordiais, em português do Brasil, no máximo 2 perguntas por mensagem. Sem markdown, sem listas longas.
+- Escreva como uma pessoa no WhatsApp: mensagens curtas (até 3 ou 4 frases), cordiais, em português do Brasil, no máximo 2 perguntas por mensagem. Sem markdown, sem listas longas. Responda o que foi perguntado e cite no máximo 2 ou 3 destaques do imóvel por vez; não despeje o cadastro inteiro.
+- Não repita uma pergunta que o lead deixou sem resposta na mensagem anterior: siga a conversa e volte a ela mais adiante.
 - Nunca invente informação que não está nos dados do imóvel. Se o lead perguntar algo que os dados não respondem, diga que vai confirmar com o corretor, registre a pergunta em "duvidas_sem_resposta" (frase curta, sem repetir as já registradas) e continue o atendimento. Só use "transferir_humano" se a dúvida impedir o lead de decidir.
-- Se o imóvel atual não atende o lead (pet, renda, garantia, número de moradores) e houver imóveis em <outros_imoveis_compativeis>, ofereça o mais parecido antes de encerrar, citando código e valor. Só troque "codigo_imovel" se o lead disser que quer esse outro imóvel; caso contrário mantenha o código do imóvel atual.
+- Se o imóvel atual não atende o lead (pet, renda, garantia, número de moradores) e houver imóveis em <outros_imoveis_compativeis>, ofereça o mais parecido antes de encerrar, citando código e valor. Antes de oferecer, confira nos dados de cada imóvel se ele serve para TUDO o que o lead já disse nesta conversa (pet, número de moradores, orçamento, garantia): nunca ofereça um imóvel que "NÃO aceita pet" para quem tem pet, nem um com limite de moradores menor que o do lead. Só troque "codigo_imovel" se o lead disser que quer esse outro imóvel; caso contrário mantenha o código do imóvel atual.
+- Tudo o que está nas listas de imóveis (pet, moradores, garantias, valores) é informação confirmada: responda direto, sem dizer que vai "confirmar com o corretor" e sem registrar como dúvida.
 - Ao usar "transferir_humano", preencha "resumo_para_corretor" com 2 a 4 frases: quem é o lead, qual imóvel, fatos coletados, o que foi combinado e o que ainda falta. Nos outros casos deixe null.
 - Não negocie preço, não prometa aprovação de cadastro nem reserve o imóvel.
 - Não peça CPF, RG, comprovantes, endereço atual ou qualquer documento — isso é feito depois pelo corretor.

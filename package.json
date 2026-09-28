@@ -15,6 +15,7 @@
     "seed:dev": "node src/db/seed-dev.js",
     "tenant:wa-token": "node src/db/set-wa-token.js",
     "conta": "node src/db/conta-cli.js",
+    "avaliar": "node tools/avaliar-atendimento.js",
     "test": "jest --runInBand"
   },
   "dependencies": {

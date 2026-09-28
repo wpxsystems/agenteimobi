@@ -224,7 +224,9 @@ async function processReply(tenant, leadId) {
     const activeProperties = await Property.findAll({ where: { isActive: true }, order: [['createdAt', 'DESC']], limit: 20, transaction: t });
     const plainLead = lead.get({ plain: true });
     const alternatives = property
-      ? findAlternatives(plainLead.qualification, activeProperties.map((p) => p.get({ plain: true })), property.id)
+      // Até 8: a lista usa os fatos de ANTES desta mensagem; com as regras de cada imóvel na linha,
+      // a IA descarta na hora o que ficou incompatível com o que o lead acabou de dizer.
+      ? findAlternatives(plainLead.qualification, activeProperties.map((p) => p.get({ plain: true })), property.id, 8)
       : [];
     // Horários livres de visita: só com imóvel definido e lead que ainda pode visitar.
     const visitSlots =

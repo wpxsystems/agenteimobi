@@ -59,6 +59,8 @@ function lead(l) {
     lastOutboundAt: iso(l.lastOutboundAt),
     source: l.source,
     anonymized: Boolean(l.anonymizedAt),
+    // Só na lista: transferido e ainda sem resposta de um humano (ver lead.service.AWAITING_SQL).
+    awaitingBroker: Boolean(typeof l.get === 'function' ? l.get('awaitingBroker') : l.awaitingBroker),
     createdAt: iso(l.createdAt),
     updatedAt: iso(l.updatedAt),
   };

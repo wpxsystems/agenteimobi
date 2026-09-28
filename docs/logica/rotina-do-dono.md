@@ -112,6 +112,20 @@ sequenceDiagram
 - **Tela "Hoje":** os mesmos números, calculados na hora.
 - **🧪 Teste:** integração › "resumo diário: depois das 8h locais, uma vez por dia, desligável".
 
+### Passo 8: lead esperando o corretor (`lead.service.AWAITING_SQL`, painel)
+- **Regra única**, a mesma do resumo do dia e do aviso `lead_sem_retorno`: `status = transferido`, lead não excluído e nenhuma mensagem de humano desde `handoff_at`.
+- **API:**
+  - `GET /api/v1/leads` devolve `awaitingBroker` em cada lead e `awaitingTotal`, o total da conta, que não depende dos filtros;
+  - `?awaiting=true` filtra só esses leads;
+  - `GET /api/v1/leads/:id` também devolve `awaitingBroker`.
+- **Painel:**
+  - contador vermelho no item "Leads" do menu e no título da aba do navegador, como "(2) Imobi", atualizado a cada 30 s em qualquer tela;
+  - abas "Aguardando" e "Todos" na lista; em "Todos", quem espera fica no topo, com a etiqueta "Esperando o corretor há X";
+  - bloco "Esperando o corretor" na tela Hoje, com "Abrir conversa", sem esperar o prazo do aviso;
+  - faixa no topo da conversa com o tempo de espera e o botão "Responder agora".
+- **Resposta que chegou atrasada:** `carregarLeads` descarta a resposta de um pedido antigo. Troca rápida de aba não mistura as listas.
+- **🧪 Teste:** integração › "leads esperando o corretor: filtro, contador e marca na lista e na ficha".
+
 ## 4. Integridade das partes
 
 | Produz | Consome | Formato | Quebra se… |

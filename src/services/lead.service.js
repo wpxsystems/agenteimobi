@@ -3,30 +3,46 @@
 const { Op } = require('sequelize');
 const inTx = require('../db/inTx');
 const AppError = require('../errors/AppError');
-const { Lead, Message, Property } = require('../models');
+const { sequelize, Lead, Message, Property } = require('../models');
 const conversation = require('./conversation.service');
 const { describeQualification } = require('./scoring');
 
-async function list(tenantId, { classification, status, propertyId, limit, offset }) {
+/**
+ * Lead esperando o corretor: transferido pela assistente (ou pelo painel) e sem nenhuma mensagem
+ * de um humano desde a transferência. Mesma regra do resumo do dia e do aviso "lead sem retorno".
+ */
+const AWAITING_SQL = `("aim_lead"."status" = 'transferido' AND "aim_lead"."anonymized_at" IS NULL
+  AND NOT EXISTS (SELECT 1 FROM aim_message m WHERE m.lead_id = "aim_lead"."id" AND m.author = 'human'
+                   AND m.created_at >= COALESCE("aim_lead"."handoff_at", "aim_lead"."updated_at")))`;
+
+/**
+ * @returns {{ rows, count, awaitingTotal }} awaitingTotal = quantos esperam o corretor na conta (sem os outros filtros)
+ */
+async function list(tenantId, { classification, status, propertyId, awaiting, limit, offset }) {
   const where = {};
   if (classification) where.classification = classification;
   if (status) where.status = status;
   if (propertyId) where.propertyId = propertyId;
-  return inTx(tenantId, (t) =>
-    Lead.findAndCountAll({
+  if (awaiting === 'true') where[Op.and] = [sequelize.literal(AWAITING_SQL)];
+  return inTx(tenantId, async (t) => {
+    const { rows, count } = await Lead.findAndCountAll({
       where,
+      attributes: { include: [[sequelize.literal(AWAITING_SQL), 'awaitingBroker']] },
       include: [{ model: Property, as: 'property', attributes: ['id', 'code', 'title'] }],
       order: [['updatedAt', 'DESC']],
       limit,
       offset,
       transaction: t,
-    })
-  );
+    });
+    const awaitingTotal = await Lead.count({ where: { [Op.and]: [sequelize.literal(AWAITING_SQL)] }, transaction: t });
+    return { rows, count, awaitingTotal };
+  });
 }
 
 async function get(tenantId, id) {
   const result = await inTx(tenantId, async (t) => {
     const lead = await Lead.findByPk(id, {
+      attributes: { include: [[sequelize.literal(AWAITING_SQL), 'awaitingBroker']] },
       include: [{ model: Property, as: 'property', attributes: ['id', 'code', 'title'] }],
       transaction: t,
     });

@@ -26,14 +26,11 @@
   </div>
   <nav class="abas" aria-label="Seções">
     <span class="grupo">Operação</span>
-    <button type="button" class="aba" data-view="inicio" title="Primeiros passos" id="aba-inicio" hidden>
-      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10.5 8 14.5 16 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Primeiros passos</span>
-    </button>
     <button type="button" class="aba" data-view="hoje" title="Hoje">
       <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3.5a4.5 4.5 0 0 0-4.5 4.5c0 3.2-1.5 4.5-1.5 4.5h12s-1.5-1.3-1.5-4.5A4.5 4.5 0 0 0 10 3.5zM8.5 15a1.5 1.5 0 0 0 3 0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg><span>Hoje</span><b class="contador" id="contador-avisos" hidden></b>
     </button>
     <button type="button" class="aba" data-view="leads" aria-current="page" title="Leads">
-      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14v9H8l-4 3v-3H3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg><span>Leads</span>
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14v9H8l-4 3v-3H3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg><span>Leads</span><b class="contador urgente" id="contador-corretor" hidden title="Leads esperando o corretor"></b>
     </button>
     <button type="button" class="aba" data-view="agenda" title="Agenda">
       <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3 8.5h14M7 3v3M13 3v3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg><span>Agenda</span>
@@ -54,6 +51,9 @@
     <span class="grupo">Conta</span>
     <button type="button" class="aba" data-view="plano" title="Conta e plano">
       <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="5" width="14" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3 8.5h14" fill="none" stroke="currentColor" stroke-width="1.6"/></svg><span>Conta e plano</span>
+    </button>
+    <button type="button" class="aba" data-view="inicio" title="Primeiros passos" id="aba-inicio" hidden>
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10.5 8 14.5 16 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Primeiros passos</span>
     </button>
   </nav>
   <div class="rodape-menu">
@@ -210,6 +210,10 @@
           <option value="indefinido">Ainda qualificando</option>
         </select>
       </div>
+      <div class="lista-abas" role="tablist" aria-label="Quais leads mostrar">
+        <button type="button" role="tab" data-lista="corretor" aria-selected="false" id="aba-corretor" title="Leads que a assistente passou para o corretor e ainda não receberam resposta">Aguardando <b id="aba-corretor-n"></b></button>
+        <button type="button" role="tab" data-lista="todos" aria-selected="true">Todos</button>
+      </div>
       <button type="button" class="botao secundario largo" id="novo-simulado" hidden>Simular um lead novo</button>
       <ol class="lista-itens" id="leads"></ol>
     </aside>
@@ -229,6 +233,13 @@
             <button type="button" class="botao secundario" id="bot-toggle"></button>
           </div>
         </header>
+        <div class="faixa-corretor" id="faixa-corretor" hidden role="status">
+          <div>
+            <strong>A assistente passou este lead para o corretor.</strong>
+            <span id="faixa-corretor-texto"></span>
+          </div>
+          <button type="button" class="botao primario" id="faixa-responder">Responder agora</button>
+        </div>
         <ol class="mensagens" id="mensagens"></ol>
         <p class="digitando" id="digitando" hidden><span></span><span></span><span></span> assistente escrevendo</p>
         <form class="compositor" id="form-mensagem">
@@ -366,8 +377,16 @@
       <h1>Hoje</h1>
       <p class="sutil" id="hoje-data"></p>
     </header>
+    <aside class="cartao-configuracao" id="cartao-configuracao" hidden aria-label="Configuração da conta"></aside>
     <p class="erro" role="alert"></p>
     <div class="tiles" id="hoje-resumo"></div>
+    <section class="bloco" id="bloco-esperando">
+      <div class="bloco-cabeca">
+        <h2>Esperando o corretor</h2>
+        <p class="sutil">Leads que a assistente passou para você e ainda não receberam resposta.</p>
+      </div>
+      <ul class="esperando" id="hoje-esperando"></ul>
+    </section>
     <section class="bloco">
       <div class="bloco-cabeca">
         <h2>Avisos</h2>

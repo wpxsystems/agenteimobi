@@ -21,6 +21,8 @@ const state = {
   dev: null, // { waMock, aiConfigured, tenant }
   leads: [],
   filtro: '',
+  lista: 'todos', // 'todos' | 'corretor' (só os que esperam o corretor)
+  aguardandoCorretor: 0,
   leadId: null,
   lead: null,
   simulado: null, // { phone, name } de um lead que ainda não existe no banco
@@ -48,6 +50,19 @@ const dataHora = (iso) => new Date(iso).toLocaleString('pt-BR', { day: '2-digit'
 const telefone = (d) => (d && d.length >= 12 ? `+${d.slice(0, 2)} (${d.slice(2, 4)}) ${d.slice(4, -4)}-${d.slice(-4)}` : d || '');
 
 const CLASSE = { quente: 'Quente', morno: 'Morno', frio: 'Frio', indefinido: 'Qualificando' };
+/** Rótulo da temperatura: lead que saiu do atendimento sem dados suficientes não está "qualificando". */
+const classeDe = (l) => (l.classification === 'indefinido' && !['novo', 'em_atendimento'].includes(l.status) ? 'Sem qualificação' : CLASSE[l.classification]);
+/** Motivo da transferência em português (os da IA já vêm em texto livre). */
+const MOTIVOS_TRANSFERENCIA = {
+  visita_solicitada: 'o lead quer visitar',
+  solicitado_pela_ia: 'a assistente passou para o corretor',
+  horario_ocupado: 'o horário escolhido acabou de ser ocupado',
+  'plano:teste_expirado': 'o teste grátis terminou',
+  'plano:limite_de_conversas': 'o limite de conversas do mês acabou',
+  'plano:pagamento_atrasado': 'o pagamento está atrasado',
+  'plano:assinatura_cancelada': 'a assinatura foi cancelada',
+};
+const motivoTransferencia = (r) => MOTIVOS_TRANSFERENCIA[r] || r;
 const STATUS = {
   novo: 'Novo', em_atendimento: 'Em atendimento', transferido: 'Transferido ao corretor',
   visita_agendada: 'Visita agendada', descartado: 'Descartado', opt_out: 'Pediu para sair',
@@ -224,6 +239,7 @@ document.querySelectorAll('.aba[data-view]').forEach((b) => b.addEventListener('
 $('sair').addEventListener('click', async () => {
   try { if (state.refreshToken) await api('/auth/logout', { method: 'POST', body: { refreshToken: state.refreshToken }, tentarRefresh: false }); } catch { /* sessão já inválida */ }
   limparSessao();
+  atualizarContadorCorretor(0);
   cofre.set('aim.semAuto', '1'); // saiu de propósito: não entrar sozinho de novo até pedir
   mostrarView('login');
   $('login-dev').hidden = cofre.get('aim.devLogin') !== '1';
@@ -333,6 +349,7 @@ formCadastro.addEventListener('submit', (ev) => {
     salvarSessao(data);
     cofre.del('aim.semAuto');
     cofre.del('aim.devLogin'); // entrou numa conta própria: não voltar sozinho para o admin do seed
+    state.recemCriada = true; // conta nova abre nos primeiros passos; depois, sempre em Hoje
     formCadastro.reset();
     enderecoEditado = false;
     await iniciar();
@@ -417,8 +434,43 @@ async function renderCaixaLocal(mostrar) {
 async function carregarConta() {
   state.account = await api('/account');
   $('conta-nome').textContent = state.account.tenant.name;
-  $('aba-inicio').hidden = state.account.onboarding.completed;
+  atualizarAbaInicio();
   return state.account;
+}
+
+// Primeiros passos fora do caminho: item no grupo "Conta" e cartão discreto na tela Hoje, que dá para dispensar.
+const chaveDispensado = () => `aim.primeirosPassos.dispensado.${state.account?.tenant?.id || ''}`;
+const configuracaoPendente = () => Boolean(state.account && !state.account.onboarding.completed);
+function atualizarAbaInicio() {
+  $('aba-inicio').hidden = !configuracaoPendente();
+}
+
+function renderCartaoConfiguracao() {
+  const cartao = $('cartao-configuracao');
+  if (!configuracaoPendente() || cofre.get(chaveDispensado()) === '1') {
+    cartao.hidden = true;
+    return;
+  }
+  const { steps } = state.account.onboarding;
+  const feitos = steps.filter((x) => x.done).length;
+  const proximo = steps.find((x) => !x.done);
+  const def = passosDef();
+  cartao.hidden = false;
+  cartao.innerHTML = `
+    <div class="cartao-configuracao-texto">
+      <strong>Configure sua conta: ${feitos} de ${steps.length} passos feitos.</strong>
+      <span class="sutil">${proximo ? `Próximo: ${esc(def[proximo.key].titulo.toLowerCase())}.` : ''}</span>
+      <span class="progresso" aria-hidden="true"><i style="width:${Math.round((feitos / steps.length) * 100)}%"></i></span>
+    </div>
+    <div class="acoes">
+      <button type="button" class="botao secundario" id="configuracao-continuar">Continuar</button>
+      <button type="button" class="botao-texto-escuro" id="configuracao-dispensar">Dispensar</button>
+    </div>`;
+  $('configuracao-continuar').addEventListener('click', () => mostrarView('inicio'));
+  $('configuracao-dispensar').addEventListener('click', () => {
+    cofre.set(chaveDispensado(), '1');
+    cartao.hidden = true;
+  });
 }
 
 function passosDef() {
@@ -577,7 +629,7 @@ async function conectarWhatsapp() {
 
 async function conectarWhatsappPasso() {
   await conectarWhatsapp();
-  $('aba-inicio').hidden = state.account.onboarding.completed;
+  atualizarAbaInicio();
   renderInicio({ whatsapp: 'WhatsApp conectado. A assistente já pode atender por esse número.' });
   await atualizarAvisos();
 }
@@ -596,7 +648,7 @@ async function copiarLinkAnuncio() {
   let copiado = true;
   try { await navigator.clipboard.writeText(trackedLink); } catch { copiado = false; }
   state.account = await api('/account/onboarding', { method: 'POST', body: { step: 'link' } });
-  $('aba-inicio').hidden = state.account.onboarding.completed;
+  atualizarAbaInicio();
   renderInicio({ link: `${copiado ? 'Copiado' : 'Copie este link'}: ${trackedLink}. Cada imóvel tem o seu, na tela Imóveis.` });
 }
 
@@ -633,7 +685,24 @@ async function carregarHoje() {
   const view = $('view-hoje');
   view.querySelector('.erro').textContent = '';
   try {
-    const { resumo: r, avisos } = await api('/today');
+    renderCartaoConfiguracao();
+    const [{ resumo: r, avisos }, esperando] = await Promise.all([api('/today'), api('/leads?awaiting=true&limit=20')]);
+    atualizarContadorCorretor(esperando.awaitingTotal);
+    const lista = esperando.items.sort((a, b) => new Date(a.handoffAt || a.updatedAt) - new Date(b.handoffAt || b.updatedAt));
+    $('hoje-esperando').innerHTML = lista.length
+      ? lista.map((l) => {
+          const min = Math.max(0, Math.round((Date.now() - new Date(l.handoffAt || l.updatedAt)) / 60000));
+          return `<li class="esperando-item" data-classe="${esc(l.classification)}">
+            <div>
+              <strong>${esc(l.name || telefone(l.phone))}</strong>
+              <span class="sutil"> ${esc(classeDe(l))}${l.property ? ` · ${esc(l.property.code)}` : ''}${l.visitPreference ? ` · quer visitar: ${esc(l.visitPreference)}` : ''}</span>
+              <p>Esperando há <strong>${esc(minutosTexto(min))}</strong>${l.handoffSummary ? `. ${esc(l.handoffSummary)}` : ''}</p>
+            </div>
+            <button type="button" class="botao primario" data-abrir-lead="${esc(l.id)}">Abrir conversa</button>
+          </li>`;
+        }).join('')
+      : '<li class="sutil">Ninguém esperando. Quando a assistente passar um lead para você, ele aparece aqui na hora.</li>';
+    $('hoje-esperando').querySelectorAll('[data-abrir-lead]').forEach((b) => b.addEventListener('click', () => abrirLead(b.dataset.abrirLead)));
     $('hoje-data').textContent = new Date(`${r.day}T12:00:00`).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
     $('hoje-resumo').innerHTML = [
       { rotulo: 'Esperando o corretor', valor: String(r.aguardando), sub: r.aguardando ? `${quentes(r.quentesAguardando)} · a mais antiga há ${minutosTexto(r.esperaMaisLongaMin)}` : 'Ninguém esperando', alerta: r.quentesAguardando > 0 },
@@ -657,7 +726,17 @@ async function carregarHoje() {
           </li>`;
         }).join('')
       : '<li class="sutil">Nenhum aviso. A assistente está dando conta.</li>';
-    $('hoje-avisos').querySelectorAll('[data-abrir-lead]').forEach((b) => b.addEventListener('click', () => { state.leadId = b.dataset.abrirLead; mostrarView('leads'); selecionarLead(b.dataset.abrirLead); }));
+    $('hoje-avisos').querySelectorAll('[data-abrir-lead]').forEach((b) => b.addEventListener('click', () => abrirLead(b.dataset.abrirLead)));
+    // O cartão "Esperando o corretor" leva à lista já filtrada.
+    const cartaoEspera = $('hoje-resumo').querySelector('.tile');
+    if (cartaoEspera) {
+      cartaoEspera.classList.add('clicavel');
+      cartaoEspera.setAttribute('role', 'button');
+      cartaoEspera.tabIndex = 0;
+      const irParaLista = () => { mostrarView('leads'); trocarLista('corretor'); };
+      cartaoEspera.addEventListener('click', irParaLista);
+      cartaoEspera.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); irParaLista(); } });
+    }
     $('hoje-avisos').querySelectorAll('[data-abrir-imovel]').forEach((b) => b.addEventListener('click', () => { mostrarView('imoveis'); abrirImovel(b.dataset.abrirImovel); }));
     $('hoje-avisos').querySelectorAll('[data-resolver]').forEach((b) => b.addEventListener('click', async () => {
       b.disabled = true;
@@ -1065,7 +1144,11 @@ async function atualizarAvisos() {
     state.billing = await api('/billing');
     avisos.push(...avisosPlano(state.billing));
   } catch { /* sem aviso de plano se a consulta falhar */ }
-  try { atualizarContador((await api('/today')).avisos.length); } catch { /* contador fica como está */ }
+  try {
+    const hoje = await api('/today');
+    atualizarContador(hoje.avisos.length);
+    atualizarContadorCorretor(hoje.resumo.aguardando);
+  } catch { /* contadores ficam como estão */ }
   if (state.dev) {
     if (!state.dev.aiConfigured) avisos.push('A assistente não vai responder: preencha <code>ANTHROPIC_API_KEY</code> no .env e reinicie a API.');
     if (state.dev.waMock) avisos.push('Modo simulação: nenhuma mensagem sai para o WhatsApp de verdade.');
@@ -1075,7 +1158,18 @@ async function atualizarAvisos() {
   $('aviso').hidden = avisos.length === 0;
 }
 
+// Contador "esperando o corretor" atualizado em qualquer tela (a cada 30 s, só com sessão aberta).
+let timerContadorCorretor = null;
+function vigiarEsperaCorretor() {
+  if (timerContadorCorretor) return;
+  timerContadorCorretor = setInterval(async () => {
+    if (!state.accessToken || PUBLIC_VIEWS.includes(state.view)) return;
+    try { atualizarContadorCorretor((await api('/leads?awaiting=true&limit=1')).awaitingTotal); } catch { /* tenta de novo no próximo ciclo */ }
+  }, 30000);
+}
+
 async function iniciar() {
+  vigiarEsperaCorretor();
   $('usuario-nome').textContent = state.user?.name || '';
   try {
     state.dev = await api('/dev/status');
@@ -1087,7 +1181,9 @@ async function iniciar() {
   $('novo-simulado').hidden = !state.dev;
   $('enviar-lead').hidden = !state.dev;
   $('conversa-vazia-dica').textContent = state.dev ? 'Ou use "Simular um lead novo" para conversar como se fosse um cliente chegando pelo anúncio.' : '';
-  mostrarView(state.account.onboarding.completed ? 'hoje' : 'inicio');
+  // Página inicial é sempre "Hoje". Só a conta que acabou de ser criada abre nos primeiros passos.
+  mostrarView(state.recemCriada && configuracaoPendente() ? 'inicio' : 'hoje');
+  state.recemCriada = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1095,12 +1191,49 @@ async function iniciar() {
 // ---------------------------------------------------------------------------
 $('filtro-classificacao').addEventListener('change', (ev) => { state.filtro = ev.target.value; carregarLeads(); });
 
+/** Contador de leads esperando o corretor: menu, aba da lista e título da aba do navegador. */
+function atualizarContadorCorretor(n) {
+  state.aguardandoCorretor = n || 0;
+  const texto = n > 99 ? '99+' : String(n || '');
+  $('contador-corretor').hidden = !n;
+  $('contador-corretor').textContent = texto;
+  $('contador-corretor').setAttribute('aria-label', `${n} leads esperando o corretor`);
+  $('aba-corretor-n').textContent = n ? `(${texto})` : '';
+  $('aba-corretor').classList.toggle('tem', Boolean(n));
+  document.title = n ? `(${texto}) Imobi` : 'Imobi';
+}
+
+/** Abre a conversa de um lead a partir de outra tela (Hoje, avisos). */
+function abrirLead(id) {
+  mostrarView('leads');
+  selecionarLead(id);
+  trocarPainel('conversa');
+}
+
+function trocarLista(nome) {
+  state.lista = nome;
+  document.querySelectorAll('.lista-abas [data-lista]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.lista === nome)));
+  carregarLeads();
+}
+document.querySelectorAll('.lista-abas [data-lista]').forEach((b) => b.addEventListener('click', () => trocarLista(b.dataset.lista)));
+
+let pedidoLeads = 0; // só vale a resposta do pedido mais recente (troca de aba rápida não mistura listas)
 async function carregarLeads() {
+  const meu = ++pedidoLeads;
   try {
-    const q = state.filtro ? `?classification=${state.filtro}&limit=100` : '?limit=100';
-    const data = await api(`/leads${q}`);
+    const params = new URLSearchParams({ limit: '100' });
+    if (state.filtro) params.set('classification', state.filtro);
+    if (state.lista === 'corretor') params.set('awaiting', 'true');
+    const data = await api(`/leads?${params}`);
+    if (meu !== pedidoLeads) return; // chegou depois de um pedido mais novo: descarta
+    atualizarContadorCorretor(data.awaitingTotal);
     const ordem = { quente: 0, morno: 1, indefinido: 2, frio: 3 };
-    state.leads = data.items.sort((a, b) => (ordem[a.classification] - ordem[b.classification]) || (new Date(b.lastInboundAt || b.createdAt) - new Date(a.lastInboundAt || a.createdAt)));
+    // Quem espera o corretor vem primeiro (o que espera há mais tempo no topo); depois, por temperatura e recência.
+    state.leads = data.items.sort((a, b) =>
+      (Number(b.awaitingBroker) - Number(a.awaitingBroker)) ||
+      (a.awaitingBroker && b.awaitingBroker ? new Date(a.handoffAt || a.updatedAt) - new Date(b.handoffAt || b.updatedAt) : 0) ||
+      (ordem[a.classification] - ordem[b.classification]) ||
+      (new Date(b.lastInboundAt || b.createdAt) - new Date(a.lastInboundAt || a.createdAt)));
     renderLeads();
     // Lead simulado acabou de ser criado no banco: passa a acompanhar ele.
     if (state.simulado) {
@@ -1115,15 +1248,21 @@ async function carregarLeads() {
 function renderLeads() {
   const ul = $('leads');
   if (!state.leads.length && !state.simulado) {
-    ul.innerHTML = `<li class="lista-vazia">${state.filtro ? 'Nenhum lead com essa classificação.' : 'Nenhum lead ainda. Quando alguém clicar no link do anúncio e mandar mensagem, ele aparece aqui.'}</li>`;
+    ul.innerHTML = `<li class="lista-vazia">${
+      state.lista === 'corretor'
+        ? 'Ninguém esperando o corretor agora. Quando a assistente passar um lead para você, ele aparece aqui.'
+        : state.filtro ? 'Nenhum lead com essa classificação.' : 'Nenhum lead ainda. Quando alguém clicar no link do anúncio e mandar mensagem, ele aparece aqui.'
+    }</li>`;
     return;
   }
+  const esperandoHa = (l) => minutosTexto(Math.max(0, Math.round((Date.now() - new Date(l.handoffAt || l.updatedAt)) / 60000)));
   const itens = state.leads.map((l) => `
-    <li><button type="button" class="lead-item" data-id="${l.id}" data-classe="${l.classification}" aria-current="${l.id === state.leadId}">
+    <li><button type="button" class="lead-item${l.awaitingBroker ? ' espera' : ''}" data-id="${l.id}" data-classe="${l.classification}" aria-current="${l.id === state.leadId}">
       <span class="barra" aria-hidden="true"></span>
       <span class="nome">${esc(l.name || telefone(l.phone))}</span>
       <span class="quando">${l.lastInboundAt ? dataHora(l.lastInboundAt) : ''}</span>
-      <span class="detalhe">${esc(CLASSE[l.classification])} · ${esc(STATUS[l.status] || l.status)}${l.property ? ` · ${esc(l.property.code)}` : ''}</span>
+      ${l.awaitingBroker ? `<span class="etiqueta-espera">Esperando o corretor há ${esc(esperandoHa(l))}</span>` : ''}
+      <span class="detalhe">${esc(classeDe(l))} · ${esc(STATUS[l.status] || l.status)}${l.property ? ` · ${esc(l.property.code)}` : ''}</span>
     </button></li>`);
   if (state.simulado) {
     itens.unshift(`<li><button type="button" class="lead-item" data-id="simulado" data-classe="indefinido" aria-current="${state.leadId === null}">
@@ -1266,7 +1405,7 @@ function renderFicha(antes) {
   const carimbo = $('carimbo');
   if (carimbo.dataset.classe !== l.classification) {
     carimbo.dataset.classe = l.classification;
-    carimbo.textContent = CLASSE[l.classification];
+    carimbo.textContent = classeDe(l);
     if (antes && antes.id === l.id) { carimbo.style.animation = 'none'; void carimbo.offsetWidth; carimbo.style.animation = ''; }
   }
   $('pontuacao-preenchida').style.width = `${Math.max(0, Math.min(100, l.score || 0))}%`;
@@ -1304,12 +1443,26 @@ function renderFicha(antes) {
   $('lead-anonimizado').hidden = !l.anonymized;
   if (l.anonymized) sel.disabled = true;
   renderVisitaLead(l);
-  $('lead-handoff').textContent = l.handoffAt ? `Transferido em ${dataHora(l.handoffAt)}${l.handoffReason ? `: ${l.handoffReason}` : ''}` : (l.status === 'opt_out' ? 'O lead pediu para não receber mais mensagens.' : '');
+  // Faixa no topo da conversa: o lead espera o corretor.
+  $('faixa-corretor').hidden = !l.awaitingBroker;
+  if (l.awaitingBroker) {
+    const min = Math.max(0, Math.round((Date.now() - new Date(l.handoffAt || l.updatedAt)) / 60000));
+    // Curta: o resumo completo já está na ficha, ao lado.
+    $('faixa-corretor-texto').textContent = ` Esperando há ${minutosTexto(min)}. O lead já sabe que um corretor vai continuar por aqui.`;
+  }
+  $('lead-handoff').textContent = l.handoffAt
+    ? `${l.handoffReason === 'visita_agendada' ? 'Visita marcada pela assistente' : 'Transferido'} em ${dataHora(l.handoffAt)}${l.handoffReason && l.handoffReason !== 'visita_agendada' ? `: ${motivoTransferencia(l.handoffReason)}` : ''}`
+    : (l.status === 'opt_out' ? 'O lead pediu para não receber mais mensagens.' : '');
 }
 $('lead-status').addEventListener('change', async (ev) => {
   if (!state.lead) return;
   try { await api(`/leads/${state.lead.id}`, { method: 'PATCH', body: { status: ev.target.value } }); await carregarLead(); await carregarLeads(); }
   catch (err) { $('mensagem-erro').textContent = err.message; }
+});
+
+$('faixa-responder').addEventListener('click', () => {
+  trocarPainel('conversa');
+  $('texto-mensagem').focus();
 });
 
 // LGPD: cópia dos dados e exclusão a pedido do titular.
@@ -1347,7 +1500,7 @@ $('lead-excluir').addEventListener('click', async () => {
 // ---------------------------------------------------------------------------
 async function carregarImoveis() {
   try {
-    state.properties = await api('/properties');
+    state.properties = (await api('/properties')).sort((a, b) => a.code.localeCompare(b.code, 'pt-BR', { numeric: true }));
     renderImoveis();
   } catch (err) {
     $('imoveis').innerHTML = `<li class="lista-vazia">${esc(err.message)}</li>`;
@@ -1621,7 +1774,7 @@ function renderAtendimento(view, d) {
     { rotulo: 'Mensagens dos leads', valor: m.totals.lead, sub: m.leads ? `${(m.totals.lead / m.leads).toFixed(1).replace('.', ',')} por conversa` : 'nenhuma conversa no período' },
     { rotulo: 'Respostas da assistente', valor: m.totals.bot, sub: `${m.totals.system} ${m.totals.system === 1 ? 'aviso automático' : 'avisos automáticos'}` },
     { rotulo: 'Respostas do corretor', valor: m.totals.human, sub: 'enviadas pelo painel' },
-    { rotulo: 'Resolvidos só pela assistente', valor: m.botOnlyRate === null ? '—' : `${String(m.botOnlyRate).replace('.', ',')}%`, sub: `${m.botOnly} de ${m.leads} ${m.leads === 1 ? 'conversa' : 'conversas'} sem resposta humana` },
+    { rotulo: 'Sem resposta do corretor', valor: m.botOnlyRate === null ? '—' : `${String(m.botOnlyRate).replace('.', ',')}%`, sub: `${m.botOnly} de ${m.leads} ${m.leads === 1 ? 'conversa atendida' : 'conversas atendidas'} só pela assistente até agora` },
   ].map(tile).join('');
 
   serie(view, 'mensagens', m.byDay, [{ key: 'lead', nome: 'dos leads', cls: 'c1' }, { key: 'bot', nome: 'da assistente', cls: 'c2' }, { key: 'human', nome: 'do corretor', cls: 'c3' }], 'Mensagens por dia');
