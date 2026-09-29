@@ -13,5 +13,5 @@ COPY src ./src
 COPY public ./public
 USER node
 EXPOSE 3000
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD wget -qO- http://127.0.0.1:${PORT:-3000}/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
 CMD ["sh", "-c", "node src/db/migrate.js up && node src/server.js"]

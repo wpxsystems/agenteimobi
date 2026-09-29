@@ -1,78 +1,95 @@
-# Deploy na VPS da WPX
+# Deploy do agenteimobi no vps2
 
-O sistema roda na VPS compartilhada da WPX, atrás do Traefik (rede `wpxnet`), com HTTPS automático do
-Let's Encrypt. Cada sistema da VPS tem um subdomínio de `wpxsystems.com.br`; este usa
-`imobi.wpxsystems.com.br`.
+O agenteimobi é um **app novo** e vai direto para o **vps2** (195.35.43.173), seguindo o
+`wpx-infra/docs/app-novo.md`. O servidor antigo (`wpx`, 72.60.50.139) está sendo esvaziado e não
+recebe apps novos (`wpx-padroes/references/11-servidores-atuais.md`).
 
-## 1. DNS (uma vez)
+Modelo: push na `main` → Actions testa e monta a imagem → envia pela chave deste app → o vps2
+valida, sobe, confere a saúde e volta a versão anterior se falhar.
 
-No painel de DNS do domínio `wpxsystems.com.br`, crie um registro:
+| Item | Valor |
+|---|---|
+| Nome do app | `agenteimobi` |
+| Imagem | `wpx/agenteimobi-api` (um serviço só: API + painel estático) |
+| Endereço | `https://imobi.wpxsystems.com.br` |
+| Banco | `agenteimobi`, no Postgres compartilhado do vps2 |
+| Arquivos de produção | `deploy/vps2/` deste repo → `wpx-infra/server/config/agenteimobi/` |
 
-| Tipo | Nome  | Valor          |
-|------|-------|----------------|
-| A    | imobi | 72.60.50.139   |
+## Checklist (`app-novo.md`)
 
-Sem esse registro o Traefik não consegue emitir o certificado e o link não abre.
+```
+[ ] 1  nomes das imagens: wpx/agenteimobi-api            (feito neste repo)
+[ ] 2  config no wpx-infra: server/config/agenteimobi/    (copiar deploy/vps2/compose.yml e deploy.conf)
+[ ] 3  agenteimobi no case dos dois scripts + base reinstalada no vps2      (admin)
+[ ] 4  banco e papéis criados                              (admin, ver abaixo)
+[ ] 5  /etc/wpx/agenteimobi/ com compose, deploy.conf e .env               (admin)
+[ ] 6  chave ci-wpx-agenteimobi + onboard-projeto.sh      (admin)
+[ ] 7  secrets no GitHub                                   (admin)
+[ ] 8  workflow deploy.yml a partir do template            (ver abaixo)
+[ ] 9  DNS: A imobi → 195.35.43.173 no Registro.br         (dono do domínio)
+[ ] 10 testes: deploy, separação, rollback, backup
+[ ] 11 apagar a chave de CI do PC
+```
 
-## 2. Código na VPS (uma vez)
+## Passo 4 — Banco: diferença em relação ao padrão `_app`/`_auth`
+
+Este app separa **dono** e **aplicação** (as migrations criam policies e funções SECURITY DEFINER que
+pertencem ao dono; a aplicação roda sem BYPASSRLS e com FORCE RLS). Por isso são dois papéis com
+LOGIN, nenhum superusuário, e sem papel `_auth`:
+
+```sql
+-- no vps2: sudo docker exec -it postgres psql -U wpxadmin -d postgres
+CREATE ROLE agenteimobi_owner LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD '<senha-owner>';
+CREATE ROLE agenteimobi_app   LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS PASSWORD '<senha-app>';
+CREATE DATABASE agenteimobi OWNER agenteimobi_owner;
+REVOKE ALL ON DATABASE agenteimobi FROM PUBLIC;
+GRANT CONNECT ON DATABASE agenteimobi TO agenteimobi_app;
+\c agenteimobi
+GRANT USAGE ON SCHEMA public TO agenteimobi_app;
+```
+
+As migrations rodam sozinhas na subida do container (com `DATABASE_MIGRATION_URL`) e dão ao
+`agenteimobi_app` só os grants necessários (`DB_APP_ROLE=agenteimobi_app`). Nenhuma extensão é
+necessária.
+
+## Passo 5 — `.env` de produção
+
+Modelo em `deploy/vps2/env.producao.exemplo`. Os valores são gerados e digitados só no servidor.
+`DEMO_MODE=true` deixa o WhatsApp simulado e o simulador de conversas ligado (só com login), para a
+demonstração com a Curta. Quando o número real for conectado, trocar para `false`.
+
+## Passo 8 — Workflow
+
+Copiar `wpx-infra/server/templates/deploy.yml` para `.github/workflows/deploy.yml` e ajustar:
+
+- `concurrency.group: deploy-agenteimobi`
+- `needs:` com o job de teste deste repo (`npm ci && npm test`, sem banco)
+- sem `VITE_GOOGLE_CLIENT_ID` e sem `environment:`
+- build e pacote:
+
+```yaml
+docker build -t wpx/agenteimobi-api:"$GITHUB_SHA" .
+docker save wpx/agenteimobi-api:"$GITHUB_SHA" | gzip -1 > image.tar.gz
+```
+
+O passo "Envia e implanta" fica igual ao template.
+
+## Depois do primeiro deploy — conta de demonstração
 
 ```bash
-ssh wpx
-git clone https://github.com/wpxsystems/agenteimobi.git ~/agenteimobi
-cd ~/agenteimobi
-cp .env.example .env && chmod 600 .env
+# no vps2, com a senha numa variável (nunca em argumento)
+read -rs CONTA_SENHA && export CONTA_SENHA
+sudo -E docker exec -e CONTA_SENHA agenteimobi-agenteimobi-api-1 node src/db/conta-cli.js criar \
+  --slug curta --nome "Curta! Imóveis" --admin-nome "Equipe Curta" \
+  --admin-email equipe@curta-demo.com.br --assistente Bia
 ```
 
-## 3. `.env` da VPS
-
-Preencha no próprio servidor. Nunca commite. Diferenças em relação ao local:
-
-```ini
-APP_HOST=imobi.wpxsystems.com.br
-PUBLIC_BASE_URL=https://imobi.wpxsystems.com.br
-PRIVACY_URL=https://imobi.wpxsystems.com.br/privacidade/atendimento
-CORS_ORIGINS=https://imobi.wpxsystems.com.br
-LOG_LEVEL=info
-
-# Senhas novas, só desta VPS (gerar com: openssl rand -hex 24)
-POSTGRES_PASSWORD=...
-AIM_APP_PASSWORD=...
-JWT_ACCESS_SECRET=...   # openssl rand -hex 48
-JWT_REFRESH_SECRET=...  # openssl rand -hex 48
-WA_TOKEN_ENC_KEY=...    # openssl rand -hex 32
-
-# Demonstração: WhatsApp simulado e simulador de conversas no painel.
-# Trocar para false quando o número real da imobiliária for conectado.
-DEMO_MODE=true
-WA_APP_SECRET=...       # enquanto não houver app da Meta, qualquer texto
-WA_VERIFY_TOKEN=...     # mín. 16 caracteres
-
-ANTHROPIC_API_KEY=...
-BILLING_ENABLED=false
-SIGNUP_ENABLED=false
-DEV_AUTO_LOGIN=false
-```
-
-`NODE_ENV=production` e as URLs do banco são definidas pelo `compose.vps.yml`.
-
-## 4. Subir e atualizar
+Confira o nome real do container com `sudo docker ps`. Depois cadastre os imóveis e os horários pelo
+painel. Para gerar conversas de exemplo, rode no PC a avaliação apontando para a URL pública:
 
 ```bash
-cd ~/agenteimobi
-git pull
-docker compose -f compose.vps.yml --env-file .env up -d --build
-docker compose -f compose.vps.yml logs -f api   # migrations rodam sozinhas na subida
+AVALIAR_API=https://imobi.wpxsystems.com.br/api/v1 AVALIAR_SENHA=<senha> npm run avaliar -- --conta curta --email equipe@curta-demo.com.br
 ```
-
-## 5. Criar a conta de demonstração
-
-```bash
-CONTA_SENHA='<senha forte>' docker compose -f compose.vps.yml exec -e CONTA_SENHA api \
-  node src/db/conta-cli.js criar --slug curta --nome "Curta! Imóveis" --admin-nome "Equipe Curta" --admin-email equipe@curta-demo.com.br --assistente Bia
-```
-
-Depois, com o admin logado no painel, cadastre os imóveis e os horários de visita. Para gerar conversas de
-exemplo, rode a avaliação do atendimento apontando para a URL pública (usa o simulador e chama a IA de verdade).
 
 ## O que o `DEMO_MODE` liga e o que não liga
 

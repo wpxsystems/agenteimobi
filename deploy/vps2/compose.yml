@@ -1,0 +1,31 @@
+# Compose de PRODUÇÃO do agenteimobi no vps2 (modelo de deploy por imagem da WPX).
+# Vai para wpx-infra/server/config/agenteimobi/compose.yml e é instalado em /etc/wpx/agenteimobi/.
+# Regras do onboard: image (sem build), sem ports, healthcheck em todo serviço.
+# O banco é o Postgres compartilhado do vps2 (container "postgres" na rede wpxnet).
+services:
+  agenteimobi-api:
+    image: wpx/agenteimobi-api:producao
+    restart: unless-stopped
+    env_file: .env
+    mem_limit: 512m
+    networks: [wpxnet]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=wpxnet"
+      - "traefik.http.routers.agenteimobi.rule=Host(`imobi.wpxsystems.com.br`)"
+      - "traefik.http.routers.agenteimobi.entrypoints=websecure"
+      - "traefik.http.routers.agenteimobi.tls.certresolver=letsencrypt"
+      - "traefik.http.services.agenteimobi.loadbalancer.server.port=3000"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+networks:
+  wpxnet:
+    external: true
