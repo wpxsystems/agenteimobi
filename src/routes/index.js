@@ -71,8 +71,8 @@ api.post('/leads/:id/messages', h(c.leads.sendMessage));
 api.get('/metrics/funnel', h(c.metrics.funnel));
 api.get('/metrics/overview', h(c.metrics.overview));
 
-// ---- Só fora de produção: simulador de WhatsApp do painel ----
-if (env.isDev) {
+// ---- Simulador de WhatsApp do painel: fora de produção ou com DEMO_MODE=true ----
+if (env.simulator) {
   api.get('/dev/status', h(c.dev.status));
   api.post('/dev/inbound', h(c.dev.inbound));
 }

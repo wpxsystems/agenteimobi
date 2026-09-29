@@ -326,3 +326,29 @@ describe('schemas', () => {
     expect(schemas.propertyCreate.parse({ code: 'casa02', title: 'Casa', priceCents: 1000 }).code).toBe('CASA02');
   });
 });
+
+describe('modo demonstração (DEMO_MODE)', () => {
+  const carregar = (vars) => {
+    const antes = { ...process.env };
+    Object.assign(process.env, vars);
+    let env;
+    jest.isolateModules(() => { env = require('../src/config/env'); });
+    process.env = antes;
+    return env;
+  };
+
+  test('em produção, sem DEMO_MODE: nada simulado', () => {
+    const env = carregar({ NODE_ENV: 'production', DEMO_MODE: 'false', WA_MOCK: 'true', DEV_AUTO_LOGIN: 'true' });
+    expect(env.waMock).toBe(false);
+    expect(env.simulator).toBe(false);
+    expect(env.devAutoLogin).toBe(false);
+  });
+
+  test('em produção, com DEMO_MODE: WhatsApp simulado e simulador ligado, mas sem entrada automática', () => {
+    const env = carregar({ NODE_ENV: 'production', DEMO_MODE: 'true', DEV_AUTO_LOGIN: 'true' });
+    expect(env.isDev).toBe(false);
+    expect(env.waMock).toBe(true);
+    expect(env.simulator).toBe(true);
+    expect(env.devAutoLogin).toBe(false);
+  });
+});

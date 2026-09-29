@@ -44,6 +44,9 @@ const schema = z.object({
   WA_MOCK: z.enum(['true', 'false']).default('false'),
   // Dev local: 'true' = o painel entra sozinho como o admin do seed, sem senha. Ignorado em produção.
   DEV_AUTO_LOGIN: z.enum(['true', 'false']).default('false'),
+  // Demonstração online: 'true' = mesmo em produção, o WhatsApp é simulado (nada sai para a Meta) e o
+  // simulador de conversas do painel fica ligado (exige login). Entrada automática e caixa de e-mails continuam desligadas.
+  DEMO_MODE: z.enum(['true', 'false']).default('false'),
   SEED_TENANT_SLUG: z.string().regex(/^[a-z0-9-]{3,40}$/).optional(),
   SEED_ADMIN_EMAIL: z.string().email().optional(),
 
@@ -99,7 +102,10 @@ if (env.EMAIL_PROVIDER === 'resend' && !env.RESEND_API_KEY) {
 }
 env.corsOrigins = env.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean);
 env.isDev = env.NODE_ENV !== 'production';
-env.waMock = env.isDev && env.WA_MOCK === 'true';
+env.demoMode = env.DEMO_MODE === 'true';
+env.waMock = (env.isDev && env.WA_MOCK === 'true') || env.demoMode;
+// Simulador de conversas do painel: fora de produção, ou na demonstração online.
+env.simulator = env.isDev || env.demoMode;
 env.devAutoLogin = env.isDev && env.DEV_AUTO_LOGIN === 'true';
 env.embeddedSignup = Boolean(env.META_APP_ID && env.META_ES_CONFIG_ID);
 env.billingEnabled = env.BILLING_ENABLED === 'true';
